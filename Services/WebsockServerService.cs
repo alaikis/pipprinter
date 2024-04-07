@@ -42,7 +42,7 @@ namespace DuoAssistant.Services
                     logging.Debug(message);
                     Dictionary<String, dynamic> startMsg = new Dictionary<string, dynamic>();
                     startMsg.Add("code", 200);
-                    startMsg.Add("message", "打印客服端连接成功");
+                    startMsg.Add("message", "connect the print successful");
                     startMsg.Add("cmd", "startPrint");
                     sk.Send(JsonConvert.SerializeObject(startMsg));
                     PrintServices s = new PrintServices();

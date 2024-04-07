@@ -12,6 +12,7 @@ using System.Reflection;
 using log4net;
 using System.Diagnostics;
 using System.Drawing.Printing;
+using Newtonsoft.Json.Linq;
 
 namespace DuoAssistant.Services
 {
@@ -45,48 +46,49 @@ namespace DuoAssistant.Services
         /// <returns></returns>
         public dynamic PrintPdf(String label)
         {
-
-
-            Debug.WriteLine("接收到");
-
-            logging.Debug("start pdf print");
-            dynamic dt = JsonConvert.DeserializeObject(label);
-            String labelurl = dt["label"];
+            
+            JObject dt = (JObject)JsonConvert.DeserializeObject(label);
+            String labelurl = (string)dt["label"];
             HttpClient cl = new HttpClient();
             var msg = cl.GetByteArrayAsync(labelurl).Result;
-            logging.Debug("get the stream");
             String path = Tempdir();
             String fileName = System.Guid.NewGuid().ToString("N") + ".pdf";
             String file = path + "\\" + fileName;
-            logging.Debug(file);
             Console.WriteLine(file);
             FileStream fs = new System.IO.FileStream(file, System.IO.FileMode.CreateNew);
             fs.Write(msg, 0, msg.Length);
             fs.Close();
-
+            
             PrintDocument doc = new PrintDocument();
             string primaryPrinterName = doc.PrinterSettings.PrinterName;
             string printer = primaryPrinterName;
-            Debug.WriteLine(printer);
-            try
+            if (dt.ContainsKey("printer"))
             {
-                String queryPrinter = dt["printer"];
-                Debug.WriteLine(String.Format("请求打印机:{0}", queryPrinter));
-                if (queryPrinter!=null)
-                {
-                    printer = queryPrinter;
-                }
+                printer = (string)dt["printer"];//打印机名称
             }
-            catch (Exception e)
+            int copies = 1;
+            if (dt.ContainsKey("copies"))
             {
-                logging.Debug(e.ToString());
+                copies = (int)dt["copies"];
+            }
+            String fit = "fit";//⽆边框 noscale/缩⼩到合适⼤⼩（默认）shrink/合适⼤⼩ fit/compat 兼容
+            if (dt.ContainsKey("fit"))
+            {
+                fit = (string)dt["fit"];
+            }
+            String scale = "portrait"; //portrait:纵向 ,landscape:横向
+            if (dt.ContainsKey("scale"))
+            {
+                scale = (string)dt["scale"];
             }
             Debug.WriteLine(printer);
+            int startPage = 1;
+            String cmdLine = string.Format("-print-settings {0},{1},{2}-,paperkind=258,{3}x",fit,scale,startPage,copies);
             try
             {
                 string app = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pdfreader","SumatraPDF.exe"); //String.Format("{0}\SumatraPDF.exe", AppDomain.CurrentDomain.BaseDirectory); //Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SumatraPDF.exe");
                 Debug.WriteLine(app);
-                string args = string.Format("-silent -exit-on-print -print-to \"{0}\" \"{1}\"", printer, file);
+                string args = string.Format("-silent {0} -exit-on-print -print-to \"{1}\" -exit-on-print \"{2}\"",cmdLine, printer, file);
                 Debug.WriteLine(args);
                 Process p = new Process();
                 p.StartInfo = new ProcessStartInfo()
@@ -108,7 +110,7 @@ namespace DuoAssistant.Services
 
             Dictionary<String, dynamic> rd = new Dictionary<string, dynamic>();
             rd.Add("code", 200);
-            rd.Add("message", "打印成功!");
+            rd.Add("message", "print successful!");
             rd.Add("uuid", dt["uuid"]);
             rd.Add("operator", "printer");
             return JsonConvert.SerializeObject(rd);

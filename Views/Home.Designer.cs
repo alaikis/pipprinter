@@ -44,7 +44,7 @@ namespace DuoAssistant
             // notifyIcon1
             // 
             this.notifyIcon1.Icon = ((System.Drawing.Icon)(resources.GetObject("notifyIcon1.Icon")));
-            this.notifyIcon1.Text = "卖多货";
+            this.notifyIcon1.Text = "Tinyextreme";
             this.notifyIcon1.Visible = true;
             // 
             // Home
@@ -56,7 +56,7 @@ namespace DuoAssistant
             this.ForeColor = System.Drawing.Color.Coral;
             this.Name = "Home";
             this.ShowInTaskbar = false;
-            this.Text = "卖多货打印助手";
+            this.Text = "Tinyextreme Print Assistant";
             this.ResumeLayout(false);
             this.PerformLayout();
             isShow = false;
