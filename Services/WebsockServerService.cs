@@ -40,10 +40,7 @@ namespace DuoAssistant.Services
                 sk.OnMessage = message =>
                 {
                     Dictionary<String, dynamic> startMsg = new Dictionary<string, dynamic>();
-                    startMsg.Add("code", 200);
-                    startMsg.Add("message", "connect the print successful");
-                    startMsg.Add("cmd", "startPrint");
-                    sk.Send(JsonConvert.SerializeObject(startMsg));
+                    sk.Send(JsonConvert.SerializeObject(Result.success(msg:"connect the print successful",cmd:"startPrint")));
                     PrintServices s = new PrintServices();
                     var t = s.GetType();
                     Object obj = Activator.CreateInstance(t);
