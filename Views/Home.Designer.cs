@@ -64,14 +64,9 @@ namespace DuoAssistant
             this.Hide();
             BaseServices baseServices = new BaseServices();
             baseServices.StartWhenSystemStart();
-
-
-
             //打开websock服务器
             WebsockServerService serverService = new WebsockServerService();
             serverService.StartNewWebSocket();
-
-
         }
 
         #endregion

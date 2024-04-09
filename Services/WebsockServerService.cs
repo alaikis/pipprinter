@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using log4net;
 using System.Diagnostics;
 using DuoAssistant.Services;
+using DuoAssistant.Utils;
 
 namespace DuoAssistant.Services
 {
@@ -34,12 +35,10 @@ namespace DuoAssistant.Services
                 };
                 sk.OnClose = () =>
                 {
-                    Console.WriteLine("Close!");
                     allSockers.Remove(sk);
                 };
                 sk.OnMessage = message =>
                 {
-                    logging.Debug(message);
                     Dictionary<String, dynamic> startMsg = new Dictionary<string, dynamic>();
                     startMsg.Add("code", 200);
                     startMsg.Add("message", "connect the print successful");
@@ -52,7 +51,6 @@ namespace DuoAssistant.Services
                     {
                         dynamic jsondata = JsonConvert.DeserializeObject(message);
                         String methodName = jsondata["cmd"].ToString();
-                        logging.Debug("反射方法名称：" + methodName);
                         MethodInfo method = t.GetMethod(methodName);
                         Object[] paras = new Object[] { message.ToString() };
                         dynamic redata = method.Invoke(obj, paras);
@@ -62,14 +60,8 @@ namespace DuoAssistant.Services
                     {
                         logging.Debug(ex.StackTrace);
                         Debug.WriteLine(ex.StackTrace);
-                        Dictionary<String, dynamic> rd = new Dictionary<string, dynamic>();
-                        rd.Add("code", 500);
-                        rd.Add("message", ex.Message.ToString());
-                        rd.Add("cmd", "notify");
-                        sk.Send(JsonConvert.SerializeObject(rd));
+                        sk.Send(JsonConvert.SerializeObject(Result.error(ex.Message.ToString(), cmd: "notify")));
                     }
-
-
                 };
             });
         }

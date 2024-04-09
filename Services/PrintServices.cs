@@ -13,6 +13,8 @@ using log4net;
 using System.Diagnostics;
 using System.Drawing.Printing;
 using Newtonsoft.Json.Linq;
+using System.Drawing.Printing;
+using DuoAssistant.Utils;
 
 namespace DuoAssistant.Services
 {
@@ -106,14 +108,26 @@ namespace DuoAssistant.Services
                 //恢复默认打印机
                 SetDefaultPrinter(primaryPrinterName);
             }
+            return Result.success(data: label, cmd: "printer",msg: "print successful!");
+        }
 
-
+        /**
+         * 获得打印机列表
+         */
+        public dynamic GetPrinterList(string args)
+        {
+            List<string> lt = new List<string>();
+            PrinterSettings printerSettings = new PrinterSettings();
+            foreach (string printerName in PrinterSettings.InstalledPrinters)
+            {
+                lt.Add(printerName);
+            }
             Dictionary<String, dynamic> rd = new Dictionary<string, dynamic>();
-            rd.Add("code", 200);
-            rd.Add("message", "print successful!");
-            rd.Add("uuid", dt["uuid"]);
-            rd.Add("operator", "printer");
-            return JsonConvert.SerializeObject(rd);
+            rd.Add("printers", lt);
+            rd.Add("primary", printerSettings.PrinterName);
+            return Result.success(data:rd,cmd:"getPrinterList");
         }
     }
+    
+    
 }
