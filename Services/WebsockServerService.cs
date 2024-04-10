@@ -31,6 +31,7 @@ namespace DuoAssistant.Services
                 sk.OnOpen = () =>
                 {
                     logging.Debug("Printer connect success!");
+                    sk.Send(JsonConvert.SerializeObject(Result.success(msg:"connect the print successful",cmd:"startPrint")));
                     allSockers.Add(sk);
                 };
                 sk.OnClose = () =>
@@ -40,7 +41,6 @@ namespace DuoAssistant.Services
                 sk.OnMessage = message =>
                 {
                     Dictionary<String, dynamic> startMsg = new Dictionary<string, dynamic>();
-                    sk.Send(JsonConvert.SerializeObject(Result.success(msg:"connect the print successful",cmd:"startPrint")));
                     PrintServices s = new PrintServices();
                     var t = s.GetType();
                     Object obj = Activator.CreateInstance(t);
@@ -57,7 +57,7 @@ namespace DuoAssistant.Services
                     {
                         logging.Debug(ex.StackTrace);
                         Debug.WriteLine(ex.StackTrace);
-                        sk.Send(JsonConvert.SerializeObject(Result.error(ex.Message.ToString(), cmd: "notify")));
+                        sk.Send(JsonConvert.SerializeObject(Result.error(ex.Message.ToString(), cmd: "Notify")));
                     }
                 };
             });

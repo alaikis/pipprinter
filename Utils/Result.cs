@@ -14,7 +14,7 @@ namespace DuoAssistant.Utils
             rd.Add("code", 200);
             rd.Add("timestamp", Convert.ToInt64(ts.TotalSeconds).ToString());
             rd.Add("data",data);
-            rd.Add("error",msg? msg : "success");
+            rd.Add("error",msg !=null? msg : "success");
             rd.Add("operator", cmd);
             rd.Add("uuid", System.Guid.NewGuid().ToString("N"));
             return JsonConvert.SerializeObject(rd); 

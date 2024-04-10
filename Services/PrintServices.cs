@@ -13,7 +13,6 @@ using log4net;
 using System.Diagnostics;
 using System.Drawing.Printing;
 using Newtonsoft.Json.Linq;
-using System.Drawing.Printing;
 using DuoAssistant.Utils;
 
 namespace DuoAssistant.Services
@@ -51,6 +50,10 @@ namespace DuoAssistant.Services
             
             JObject dt = (JObject)JsonConvert.DeserializeObject(label);
             String labelurl = (string)dt["label"];
+            if (!labelurl.StartsWith("http"))
+            {
+                labelurl = "https:" + labelurl;
+            }
             HttpClient cl = new HttpClient();
             var msg = cl.GetByteArrayAsync(labelurl).Result;
             String path = Tempdir();
@@ -108,7 +111,7 @@ namespace DuoAssistant.Services
                 //恢复默认打印机
                 SetDefaultPrinter(primaryPrinterName);
             }
-            return Result.success(data: label, cmd: "printer",msg: "print successful!");
+            return Result.success(data: label, cmd: "Print",msg: "print successful!");
         }
 
         /**
@@ -125,6 +128,7 @@ namespace DuoAssistant.Services
             Dictionary<String, dynamic> rd = new Dictionary<string, dynamic>();
             rd.Add("printers", lt);
             rd.Add("primary", printerSettings.PrinterName);
+            rd.Add("cmd","GetPrinterList");
             return Result.success(data:rd,cmd:"getPrinterList");
         }
     }
