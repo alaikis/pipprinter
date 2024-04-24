@@ -19,7 +19,7 @@ namespace DuoAssistant.Services
 {
     class PrintServices
     {
-        ILog logging = log4net.LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private ILog logging = LogManager.GetLogger("");
 
 
         [DllImport("winspool.drv")]
@@ -47,7 +47,7 @@ namespace DuoAssistant.Services
         /// <returns></returns>
         public dynamic PrintPdf(String label)
         {
-            
+            (new DriverCheck()).CheckPdfPrinterExist();
             JObject dt = (JObject)JsonConvert.DeserializeObject(label);
             String labelurl = (string)dt["label"];
             if (!labelurl.StartsWith("http"))
@@ -59,7 +59,6 @@ namespace DuoAssistant.Services
             String path = Tempdir();
             String fileName = System.Guid.NewGuid().ToString("N") + ".pdf";
             String file = path + "\\" + fileName;
-            Console.WriteLine(file);
             FileStream fs = new System.IO.FileStream(file, System.IO.FileMode.CreateNew);
             fs.Write(msg, 0, msg.Length);
             fs.Close();
@@ -86,14 +85,23 @@ namespace DuoAssistant.Services
             {
                 scale = (string)dt["scale"];
             }
-            Debug.WriteLine(printer);
-            int startPage = 1;
-            String cmdLine = string.Format("-print-settings {0},{1},{2}-,paperkind=258,{3}x",fit,scale,startPage,copies);
+            
+            String paperSize = "";
+            if (dt.ContainsKey("paperKind"))
+            {
+                paperSize = String.Format("paper=%s",(string)dt["paperKind"]);
+            }
+            string printPages = "1-";
+            if (dt.ContainsKey("printPages"))
+            {
+                printPages = (string)dt["printPages"];
+            }
+            String cmdLine = string.Format("-print-settings {0},{1},{2},{3},{4}x",fit,scale,printPages,paperSize,copies);
             try
             {
-                string app = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pdfreader","SumatraPDF.exe"); //String.Format("{0}\SumatraPDF.exe", AppDomain.CurrentDomain.BaseDirectory); //Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SumatraPDF.exe");
+                string app = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lib\\driver","SumatraPDF.exe"); 
                 Debug.WriteLine(app);
-                string args = string.Format("-silent {0} -exit-on-print -print-to \"{1}\" -exit-on-print \"{2}\"",cmdLine, printer, file);
+                string args = string.Format("-silent {0}  -zoom \"fit width\" -print-to \"{1}\" -exit-when-done -fullscreen \"{2}\"",cmdLine, printer, file);
                 Debug.WriteLine(args);
                 Process p = new Process();
                 p.StartInfo = new ProcessStartInfo()
@@ -130,6 +138,76 @@ namespace DuoAssistant.Services
             rd.Add("primary", printerSettings.PrinterName);
             rd.Add("cmd","GetPrinterList");
             return Result.success(data:rd,cmd:"getPrinterList");
+        }
+
+
+        /// <summary>
+        /// 读取PDF打印驱动配置信息
+        /// </summary>
+        /// <param name="args"></param>
+        /// <returns></returns>
+        public dynamic GetPdfDriverConfig(string args)
+        {
+            String config = "";
+            string targetFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lib\\driver","SumatraPDF-settings.txt");
+            if (File.Exists(targetFile))
+            {
+                try
+                {
+                    using (FileStream fs = File.Open(targetFile, FileMode.Open, FileAccess.Read))
+                    {
+                        using (StreamReader reader = new StreamReader(fs))
+                        {
+                            config = reader.ReadToEnd(); // 读取文件的全部内容
+                        }
+                    }
+                }
+                catch (IOException ioEx)
+                {
+                    Tools.Logger("IO Exception: " + ioEx.Message);
+                }
+                catch (Exception ex)
+                {
+                    Tools.Logger("Exception: " + ex.Message);
+                }
+            }
+            Dictionary<String, dynamic> rd = new Dictionary<string, dynamic>();
+            rd.Add("config", config);
+            rd.Add("cmd","GetPdfDriverConfig");
+            return Result.success(data:rd,cmd:"GetPdfDriverConfig");
+        }
+
+        /// <summary>
+        /// 更新PDF打印机配置信息
+        /// </summary>
+        /// <param name="args"></param>
+        /// <returns></returns>
+        public dynamic SetPdfPrintDriverConfig(string args)
+        {
+            string targetFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lib\\driver","SumatraPDF-settings.txt");
+            JObject data = (JObject)JsonConvert.DeserializeObject(args);
+            if (data.ContainsKey("config"))
+            {
+                using (StreamWriter sw = new StreamWriter(targetFile))
+                {
+                    sw.Write((string)data["config"]);
+                }
+            }
+            Dictionary<String, dynamic> rd = new Dictionary<string, dynamic>();
+            rd.Add("message", "the config has updated");
+            rd.Add("cmd","SetPdfPrintDriverConfig");
+            return Result.success(data:rd,cmd:"SetPdfPrintDriverConfig");
+        }
+
+        /**
+         * 模板打印
+         */
+        public dynamic TemplatePrint(String args)
+        {
+            Dictionary<String, dynamic> rd = new Dictionary<string, dynamic>();
+            rd.Add("message", "the config has updated");
+            rd.Add("cmd","TemplatePrint");
+            return Result.success(data:rd,cmd:"TemplatePrint");
         }
     }
     

@@ -32,7 +32,7 @@
               "RelativeDocumentMoniker": "Services\\PrintServices.cs",
               "ToolTip": "E:\\workspace\\com.alaikis.assistant.printer\\Services\\PrintServices.cs",
               "RelativeToolTip": "Services\\PrintServices.cs",
-              "ViewState": "AQIAAAAAAAAAAAAAAAAAAA0AAAAeAAAA",
+              "ViewState": "AQIAABQAAAAAAAAAAADwvzEAAAA3AAAA",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2024-04-10T07:46:09.095Z",
               "EditorCaption": ""
@@ -47,8 +47,7 @@
               "RelativeToolTip": "Services\\BaseServices.cs",
               "ViewState": "AQIAAAMAAAAAAAAAAAAAABAAAAAWAAAA",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2024-04-10T07:45:57.434Z",
-              "EditorCaption": ""
+              "WhenOpened": "2024-04-10T07:45:57.434Z"
             },
             {
               "$type": "Document",
@@ -60,8 +59,7 @@
               "RelativeToolTip": "Views\\Home.cs",
               "ViewState": "AQIAAAEAAAAAAAAAAADgvw0AAAAFAAAA",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2024-04-08T06:52:36.185Z",
-              "EditorCaption": ""
+              "WhenOpened": "2024-04-08T06:52:36.185Z"
             }
           ]
         }

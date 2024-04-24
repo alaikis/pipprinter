@@ -11,7 +11,7 @@ namespace DuoAssistant.Services
 {
     class BaseServices
     {
-        ILog logging = log4net.LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        ILog logging = LogManager.GetLogger("");
         /// <summary>
         /// 是否设置为开机启动
         /// </summary>
