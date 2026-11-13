@@ -63,3 +63,22 @@
 1. Gitee 不支持 `/releases/latest/download/` 别名 → 改为 API v5 解析最新 Release 的 latest.json 附件地址
 2. `Directory.Move` 移动安装目录必失败（运行中 exe 镜像锁 + log4net 日志句柄）→ 改为「旧 exe 改名让位 + 新 exe 就位 + 仅覆盖 docs/pdfreader/Resource」策略，带回滚
 3. YAML 折叠块把 shell 续行符 `\` 折成空格注入 version 字段 → printf 改单行
+
+---
+
+## 追加验收 · v1.00.002 NSIS 安装向导 + 双制品流水线（2026-11-14 05:38）
+
+### 安装向导（NSIS，Alaikis Limited）
+- 双语向导（简中/英文）、每用户安装（%LOCALAPPDATA%\Programs，免管理员）
+- 组件可选：开始菜单 / 桌面快捷方式 / 开机自启（HKCU）
+- 升级保留 config\appsettings.json 用户配置；卸载器可选保留用户数据
+- 本地实测：静默安装 → 运行（/api/status version=1.00.002，exe Company=Alaikis Limited）→ 静默卸载 → 注册表/自启/开始菜单全部清除 ✅
+
+### 流水线双制品（Linux makensis 跨平台构建）
+- tag v1.00.002 → 流水线 ~3 分钟产出：绿色版 zip（68.4MB）+ 安装版 Setup.exe（49.7MB）+ latest.json（新增 setupUrl 字段）
+- SHA256 校验通过；Linux 构建的 Setup.exe 在 Windows 实测安装/运行/卸载全部正常 ✅
+
+### 修复的坑
+1. Windows makensis 的 File 命令只认反斜杠路径（正斜杠 glob 报 no files found），Linux 相反 → SEP 宏注入分隔符（本地默认 `\`，流水线传 `-DSEP=/`）
+2. .nsi 必须 UTF-8 带 BOM，否则 Bad text encoding
+3. 静默卸载（/S）时 MessageBox 缺 /SD 导致执行中断 → 加 /SD IDYES（仅影响静默模式）
