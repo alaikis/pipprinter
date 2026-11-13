@@ -28,6 +28,9 @@ namespace DuoAssistant
                 return;
             }
 
+            // 清理上次自动更新留下的 PipPrinter.exe.old-*（旧进程已退出，此时可删）
+            UpdateService.CleanupLeftovers();
+
             // 使用入口程序集对应的默认仓储。原实现 CreateRepository("") 会创建一个命名仓储，
             // 而 Tools.Logger 里的 LogManager.GetLogger("") 解析到的是程序集默认仓储，
             // 两者不一致导致所有分级日志文件始终为空。

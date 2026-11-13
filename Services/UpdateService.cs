@@ -1,8 +1,11 @@
 using System;
 using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using DuoAssistant.Utils;
 using Newtonsoft.Json;
@@ -22,25 +25,57 @@ namespace DuoAssistant.Services
     }
 
     /// <summary>
-    /// 自动更新服务：从 Gitee Release 拉取 latest.json，校验 SHA256，下载单文件包，替换当前目录，重启。
-    /// 单文件包（PipPrinter.exe）由 Gitee Go 流水线构建，与本地构建产物一致。
+    /// 自动更新服务：解析 Gitee 最新 Release → 拉取 latest.json → 版本比对 →
+    /// 下载 zip → SHA256 校验 → 旧 exe 改名让位、新 exe 就位（用户数据不动）→ 由调用方决定是否重启。
+    /// 注意：Gitee 不支持 GitHub 风格 /releases/latest/download/&lt;file&gt; 别名，
+    /// 清单地址需通过 API v5 解析最新 Release 的附件直链。
     /// </summary>
     public sealed class UpdateService
     {
         private static readonly HttpClient Http = new HttpClient
         {
-            Timeout = TimeSpan.FromMinutes(5)
+            Timeout = TimeSpan.FromMinutes(10)
         };
-        private readonly string _downloadDir;
         private readonly string _installDir;
-        private readonly string _currentExe;
+        // 下载暂存必须在安装目录之外：替换时会整体移动安装目录，内部的暂存文件路径会全部失效
+        private readonly string _downloadDir;
 
         public UpdateService()
         {
             _installDir = AppDomain.CurrentDomain.BaseDirectory;
-            _downloadDir = Path.Combine(SettingsStore.Instance.TempDir, "update");
-            _currentExe = Path.Combine(_installDir, "PipPrinter.exe");
+            _downloadDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "PipPrinter", "update");
             if (!Directory.Exists(_downloadDir)) Directory.CreateDirectory(_downloadDir);
+        }
+
+        /// <summary>
+        /// 把配置的 UpdateManifestUrl 解析为 latest.json 的实际下载地址。
+        /// - 以 .json 结尾：直接使用
+        /// - https://gitee.com/{owner}/{repo}/releases/latest（页地址）：
+        ///   调 API v5 /repos/{owner}/{repo}/releases/latest，取 assets 里 latest.json 的 browser_download_url
+        /// </summary>
+        private static async Task<string> ResolveManifestUrlAsync(string configured)
+        {
+            if (configured.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                return configured;
+
+            var m = Regex.Match(configured, @"gitee\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/releases",
+                RegexOptions.IgnoreCase);
+            if (!m.Success)
+                return configured.TrimEnd('/') + "/download/latest.json";
+
+            var api = string.Format("https://gitee.com/api/v5/repos/{0}/{1}/releases/latest",
+                m.Groups[1].Value, m.Groups[2].Value);
+            var json = await Http.GetStringAsync(api).ConfigureAwait(false);
+            var rel = JObject.Parse(json);
+            var asset = (rel["assets"] as JArray)?
+                .FirstOrDefault(a => string.Equals(a["name"]?.ToString(), "latest.json",
+                    StringComparison.OrdinalIgnoreCase));
+            var url = asset?["browser_download_url"]?.ToString();
+            if (string.IsNullOrWhiteSpace(url))
+                throw new InvalidOperationException("最新 Release 不含 latest.json 附件");
+            return url;
         }
 
         /// <summary>拉取清单 + 比对当前版本，返回 UpdateInfo。不实际下载。</summary>
@@ -49,17 +84,12 @@ namespace DuoAssistant.Services
             var s = SettingsStore.Instance.Current;
             if (string.IsNullOrWhiteSpace(s.UpdateManifestUrl))
                 return new UpdateInfo { HasUpdate = false, Error = "未配置 UpdateManifestUrl" };
-            string manifestUrl = s.UpdateManifestUrl;
-            // 若配置的是 release 页地址，拼出 latest.json
-            if (manifestUrl.EndsWith("/releases/latest", StringComparison.OrdinalIgnoreCase) ||
-                manifestUrl.Contains("/releases/"))
-            {
-                manifestUrl = manifestUrl + "/download/latest.json";
-            }
+            string manifestUrl = null;
             try
             {
                 Http.DefaultRequestHeaders.Accept.Clear();
                 Http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                manifestUrl = await ResolveManifestUrlAsync(s.UpdateManifestUrl).ConfigureAwait(false);
                 var json = await Http.GetStringAsync(manifestUrl).ConfigureAwait(false);
                 var manifest = JsonConvert.DeserializeObject<UpdateManifest>(json);
                 if (manifest == null || string.IsNullOrWhiteSpace(manifest.Version))
@@ -71,12 +101,13 @@ namespace DuoAssistant.Services
                         Url = manifestUrl
                     };
                 var current = Brand.Version;
-                var newer = IsNewer(manifest.Version, current);
+                var remote = manifest.Version.Trim().TrimStart('v');
+                var newer = IsNewer(remote, current);
                 return new UpdateInfo
                 {
                     HasUpdate = newer,
                     Current = current,
-                    Remote = manifest.Version,
+                    Remote = remote,
                     Url = manifest.Url,
                     Sha256 = manifest.Sha256,
                     Size = manifest.Size,
@@ -88,66 +119,96 @@ namespace DuoAssistant.Services
             catch (Exception ex)
             {
                 Tools.Logger("CheckUpdate 失败: " + ex.Message);
-                return new UpdateInfo { HasUpdate = false, Error = ex.Message, Url = manifestUrl };
+                return new UpdateInfo { HasUpdate = false, Error = ex.Message, Url = manifestUrl ?? s.UpdateManifestUrl };
             }
         }
 
         /// <summary>
-        /// 执行更新：下载 → 校验 SHA256 → 备份旧目录 → 替换 → 返回新 exe 路径（由调用方决定是否重启）。
+        /// 执行更新：下载 zip → 校验 SHA256 → 解出 PipPrinter.exe 暂存 →
+        /// <summary>
+        /// 执行更新：下载 zip → SHA256 校验 → 解包暂存 →
+        /// 旧 exe 改名让位（Windows 允许改名运行中的 exe）→ 新 exe 就位 + 覆盖随包资源 →
+        /// config/data/log 用户数据不动；失败自动回滚。重启后由 CleanupLeftovers 清理残留。
         /// </summary>
         public async Task<UpdateInfo> ApplyUpdateAsync()
         {
             var check = await CheckUpdateAsync().ConfigureAwait(false);
             if (!check.HasUpdate)
             {
-                check.Error = "没有可用更新";
+                check.Error = check.Error ?? "没有可用更新";
                 return check;
             }
+            string oldExePath = null;
             try
             {
-                var targetPath = Path.Combine(_downloadDir, "PipPrinter-" + check.Remote + ".exe");
+                // 1. 下载 zip 到安装目录外的暂存区
+                var zipPath = Path.Combine(_downloadDir,
+                    "PipPrinter-" + check.Remote + "-" + Path.GetFileName(new Uri(check.Url).AbsolutePath));
                 using (var resp = await Http.GetAsync(check.Url,
                     HttpCompletionOption.ResponseContentRead).ConfigureAwait(false))
                 {
                     resp.EnsureSuccessStatusCode();
                     using var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                    using (var file = File.Create(targetPath))
+                    using (var file = File.Create(zipPath))
                     {
                         await stream.CopyToAsync(file).ConfigureAwait(false);
                     }
                 }
-                var hash = await Sha256Of(targetPath).ConfigureAwait(false);
-                if (check.Sha256 != null &&
+
+                // 2. SHA256 校验
+                var hash = await Sha256Of(zipPath).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(check.Sha256) &&
                     !string.Equals(hash, check.Sha256, StringComparison.OrdinalIgnoreCase))
+                    return new UpdateInfo { HasUpdate = false, Error = "SHA256 校验失败", Url = check.Url };
+
+                // 3. 解出发布目录到暂存区
+                var extractDir = Path.Combine(_downloadDir, "extract-" + DateTime.Now.ToString("yyyyMMddHHmmss"));
+                if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
+                ZipFile.ExtractToDirectory(zipPath, extractDir);
+                var newExe = FindFile(extractDir, "PipPrinter.exe");
+                if (newExe == null)
+                    return new UpdateInfo { HasUpdate = false, Error = "zip 内未找到 PipPrinter.exe" };
+
+                // 4. 就地替换：Windows 不允许删除/移动运行中的 exe，但允许改名。
+                //    旧 exe 改名让位（重启后由 CleanupLeftovers 清理），新 exe 拷入。
+                //    config/（用户设置+machineId）、data/、log/ 完全不动。
+                var exePath = Path.Combine(_installDir, "PipPrinter.exe");
+                oldExePath = exePath + ".old-" + DateTime.Now.ToString("yyyyMMddHHmmss");
+                File.Move(exePath, oldExePath);
+
+                try
                 {
-                    return new UpdateInfo { HasUpdate = false, Error = "SHA256 校验失败" };
-                }
-                // 备份旧目录
-                var backup = _installDir + ".bak-" + DateTime.Now.ToString("yyyyMMddHHmmss");
-                if (Directory.Exists(_installDir))
-                {
-                    Directory.Move(_installDir, backup);
-                }
-                Directory.CreateDirectory(_installDir);
-                // 拷贝新 exe + 资源
-                File.Copy(targetPath, Path.Combine(_installDir, "PipPrinter.exe"));
-                // 把旧目录里的 config/docs 拷回
-                foreach (var sub in new[] { "config", "docs", "pdfreader", "Resource" })
-                {
-                    var src = Path.Combine(backup, sub);
-                    var dst = Path.Combine(_installDir, sub);
-                    if (Directory.Exists(src))
+                    // 5. 新 exe 就位
+                    File.Copy(newExe, exePath, true);
+
+                    // 6. 覆盖随包资源（docs/web 文档、pdfreader 驱动、图标）
+                    foreach (var sub in new[] { "docs", "pdfreader", "Resource" })
                     {
-                        CopyDir(src, dst);
+                        var src = Path.Combine(extractDir, sub);
+                        if (Directory.Exists(src)) CopyDir(src, Path.Combine(_installDir, sub));
                     }
                 }
-                Tools.Logger("更新完成：旧版备份到 " + backup + "，新版安装到 " + _installDir);
+                catch
+                {
+                    // 7. 回滚：删掉未就位的新 exe，旧 exe 改回原名
+                    try
+                    {
+                        if (File.Exists(exePath)) File.Delete(exePath);
+                        if (File.Exists(oldExePath)) File.Move(oldExePath, exePath);
+                        oldExePath = null;
+                    }
+                    catch (Exception rex) { Tools.Logger("更新回滚失败: " + rex.Message); }
+                    throw;
+                }
+
+                Tools.Logger("更新完成 v" + check.Remote + "：旧 exe 备份为 " + Path.GetFileName(oldExePath) +
+                             "，重启后生效");
                 return new UpdateInfo
                 {
                     HasUpdate = false,
                     Installed = true,
-                    BackupPath = backup,
-                    ExePath = Path.Combine(_installDir, "PipPrinter.exe"),
+                    BackupPath = oldExePath,
+                    ExePath = exePath,
                     Error = "已替换；请重启应用以生效",
                     Current = check.Remote
                 };
@@ -155,8 +216,32 @@ namespace DuoAssistant.Services
             catch (Exception ex)
             {
                 Tools.Logger("ApplyUpdate 失败: " + ex);
-                return new UpdateInfo { HasUpdate = false, Error = ex.Message };
+                return new UpdateInfo { HasUpdate = false, Error = ex.Message, BackupPath = oldExePath };
             }
+        }
+
+        /// <summary>
+        /// 启动时清理上次更新留下的 PipPrinter.exe.old-*（此时旧进程已退出，文件不再被锁）。
+        /// 在 Program 启动早期调用。
+        /// </summary>
+        public static void CleanupLeftovers()
+        {
+            try
+            {
+                var dir = AppDomain.CurrentDomain.BaseDirectory;
+                foreach (var f in Directory.GetFiles(dir, "PipPrinter.exe.old-*"))
+                {
+                    try { File.Delete(f); Tools.Logger("已清理更新残留: " + Path.GetFileName(f)); }
+                    catch { /* 仍被占用则下次再清 */ }
+                }
+            }
+            catch { /* 忽略 */ }
+        }
+
+        private static string FindFile(string dir, string fileName)
+        {
+            var hit = Directory.GetFiles(dir, fileName, SearchOption.AllDirectories).FirstOrDefault();
+            return hit;
         }
 
         private static async Task<string> Sha256Of(string path)
@@ -167,7 +252,7 @@ namespace DuoAssistant.Services
             return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
-        /// <summary>语义化版本比较：newer > current 返回 true。任一侧为空时返回 false（宁可不更新）。</summary>
+        /// <summary>语义化版本比较：newer &gt; current 返回 true。任一侧为空时返回 false（宁可不更新）。</summary>
         public static bool IsNewer(string newer, string current)
         {
             if (string.IsNullOrWhiteSpace(newer) || string.IsNullOrWhiteSpace(current))
@@ -186,7 +271,6 @@ namespace DuoAssistant.Services
             }
             catch
             {
-                // 版本号无法解析时，按「不同即更新」策略
                 return !string.Equals(newer, current, StringComparison.OrdinalIgnoreCase);
             }
         }
@@ -211,16 +295,11 @@ namespace DuoAssistant.Services
 
         private static void CopyDir(string src, string dst)
         {
-            if (Directory.Exists(dst)) return;
             Directory.CreateDirectory(dst);
             foreach (var f in Directory.GetFiles(src))
-            {
-                File.Copy(f, Path.Combine(dst, Path.GetFileName(f)));
-            }
+                File.Copy(f, Path.Combine(dst, Path.GetFileName(f)), true);
             foreach (var d in Directory.GetDirectories(src))
-            {
                 CopyDir(d, Path.Combine(dst, Path.GetFileName(d)));
-            }
         }
     }
 
