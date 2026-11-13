@@ -14,9 +14,10 @@
     <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
-    <Version>2.0.0</Version>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
+    <!-- 版本规范 vMAJOR.FEATURE.PATCH：补丁版递增 PATCH(001→002)，大变更递增 FEATURE(1.01.000)，重大重构递增 MAJOR -->
+    <Version>1.00.001</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
     <Product>PipPrinter</Product>
     <Description>PipPrinter / 小莱打印助手 — 托盘常驻的本地打印助手</Description>
     <Company>alaikis</Company>

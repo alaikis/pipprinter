@@ -50,7 +50,7 @@ dotnet run -- --show             # 首次运行/验收时直接显示主窗口�
 # 发布单文件（可选，本地正式包）
 dotnet publish -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
-  -p:Version=2.0.0 -p:AssemblyVersion=2.0.0.0 -p:EnableWindowsTargeting=true \
+  -p:Version=1.00.001 -p:AssemblyVersion=1.0.1.0 -p:EnableWindowsTargeting=true \
   -o ./release/publish</code></pre>
   <div class="note">启动后请访问 <code>http://127.0.0.1:19861/api/status</code> 确认 Web 服务就绪；若端口被占用，改 <code>config/appsettings.json</code> 的 <code>webPort</code> 后重启。</div>
 

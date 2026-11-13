@@ -329,12 +329,11 @@ namespace DuoAssistant.Services
         public string GetStatus(string args)
         {
             var s = SettingsStore.Instance.Current;
-            var asm = Assembly.GetExecutingAssembly().GetName();
             return Result.success(data: new
             {
                 app = Brand.NameEn,
                 appCn = Brand.NameCn,
-                version = asm.Version?.ToString() ?? "2.0.0",
+                version = Brand.Version,
                 framework = Environment.Version.ToString(),
                 websocket = "ws://" + s.WsHost + ":" + s.WsPort,
                 webDocs = "http://" + s.WebHost + ":" + s.WebPort,
