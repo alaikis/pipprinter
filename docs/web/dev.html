@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>构建与开发规范 · PipPrinter</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">PipPrinter<small>小莱打印助手 · 开发与使用文档 v2.0</small></div>
+  <nav class="nav">
+    <div class="group">开始</div>
+    <a href="index.html">总览与快速开始</a>
+    <a href="ws.html">WebSocket 协议</a>
+    <a href="api.html">REST API</a>
+    <div class="group">开发</div>
+    <a class="active" href="dev.html">构建与开发规范</a>
+    <a href="/api/status">运行状态 (JSON)</a>
+    <a href="/api/commands">命令清单 (JSON)</a>
+  </nav>
+  <div class="sidefoot">.NET 10.0.300 SDK · WinForms</div>
+</aside>
+
+<main class="main">
+  <h1>构建与开发规范</h1>
+  <p class="lead">本项目使用 <code>/impetus</code>（OpenSpec + Superpowers 双星流程）管理变更：OpenSpec 负责 WHAT（提案 / spec 生命周期 / 归档），Superpowers 负责 HOW（设计 / 计划 / 执行 / 验收）。</p>
+
+  <h2>环境要求</h2>
+  <table>
+    <thead><tr><th>项</th><th>要求</th></tr></thead>
+    <tbody>
+      <tr><td>操作系统</td><td>Windows 10 / 11（WinForms + WinSpool + 注册表）</td></tr>
+      <tr><td>SDK</td><td>.NET 10 SDK（最新 LTS），需包含 <code>Microsoft.WindowsDesktop.App</code> 与 <code>Microsoft.AspNetCore.App</code> 共享框架</td></tr>
+      <tr><td>目标框架</td><td><code>net10.0-windows</code></td></tr>
+      <tr><td>外部依赖</td><td>SumatraPDF（随包附带，可自动恢复）；Office/WPS 或图片查看器（非 PDF 类型打印时由系统关联程序接管）</td></tr>
+    </tbody>
+  </table>
+
+  <h2>构建与运行</h2>
+  <pre><code>git clone https://codeup.aliyun.com/alaikis/software/com.alaikis.tools.printer.git
+cd com.alaikis.tools.printer
+
+dotnet restore
+dotnet build -c Release          # 期望 0 warning / 0 error
+dotnet run                       # 启动后驻留系统托盘，主窗口保持隐藏
+dotnet run -- --show             # 首次运行/验收时直接显示主窗口（默认「打印队列」页）
+
+# 发布单文件（可选）
+dotnet publish -c Release -r win-x64 --self-contained false \
+  -p:PublishSingleFile=true -o ./publish</code></pre>
+  <div class="note">启动后请访问 <code>http://127.0.0.1:19861/api/status</code> 确认 Web 服务就绪；若端口被占用，改 <code>config/appsettings.json</code> 的 <code>webPort</code> 后重启。</div>
+
+  <h2>目录结构</h2>
+  <div class="tree">com.alaikis.tools.printer/
+├── PipPrinter.csproj        # net10.0-windows + FrameworkReference AspNetCore.App
+├── Program.cs                       # STAThread 入口、单实例 Mutex、WS/Web 启停
+├── Models/
+│   └── PrintJob.cs                  # 队列任务模型 + JobStatus 常量
+├── Services/
+│   ├── SettingsStore.cs             # appsettings.json 读写单例（含目录约定）
+│   ├── CommandDispatcher.cs         # 唯一命令分派入口 + 白名单
+│   ├── PrintServices.cs             # 20 个对外命令实现
+│   ├── PrintQueueService.cs         # 顺序队列、持久化、崩溃恢复、变更事件
+│   ├── ExtendedPrintService.cs      # 多类型分流打印引擎
+│   ├── PrinterService.cs            # 本机打印机、默认切换、测试页
+│   ├── DiskCleanerService.cs        # 扫描 / 白名单 / 回收站删除
+│   ├── WebServerService.cs          # Kestrel 静态站 + REST
+│   ├── WebsockServerService.cs      # Fleck WS 服务 + 队列变更推送
+│   └── BaseServices.cs              # 开机自启（HKCU Run）
+├── Utils/
+│   ├── Result.cs                    # 统一响应结构
+│   ├── Tools.cs                     # 日志辅助
+│   └── DriverCheck.cs               # SumatraPDF 检测 / 恢复 / 在线下载
+├── Views/
+│   ├── Home.cs / Home.Designer.cs   # 托盘右键菜单 + TabControl 主窗体
+│   ├── Home.resx
+│   └── Pages/                       # 6 个 UserControl 页 + Ui 辅助
+├── config/
+│   ├── appsettings.json             # 端口、白名单、清理策略、命令白名单
+│   └── log4net.config
+├── docs/web/                        # 本文档站（随输出目录复制）
+├── Resource/                        # 图标
+├── pdfreader/SumatraPDF.exe         # 随包 PDF 打印驱动
+├── openspec/                        # OpenSpec 配置 + 变更 + 归档
+│   └── changes/printer-desktop-enhancement/
+├── docs/superpowers/                # 计划 / 方案 / 验收报告
+└── .impetus/config.yaml             # 双星流程项目状态</div>
+
+  <h2>/impetus 开发规范</h2>
+  <p>阶段流转固定为 <strong>open → design → build → verify → archive</strong>；方案类变更为 <strong>open → design → review → published</strong>。每个活跃 change 在 <code>.impetus.yaml</code> 里记录 <code>phase</code>、<code>build_mode</code>、<code>isolation</code>、<code>build_pause</code>。</p>
+  <table>
+    <thead><tr><th>产物</th><th>位置</th><th>要求</th></tr></thead>
+    <tbody>
+      <tr><td>提案 proposal.md</td><td><code>openspec/changes/&lt;name&gt;/</code></td><td>含 Why / What / Impact / <strong>Non-goals</strong> / <strong>Risks</strong>；正文 ≤ 500 字</td></tr>
+      <tr><td>设计 design.md</td><td>同上</td><td>含 <strong>Decisions / Alternatives / Consequences / Verification</strong>；UI 决策给可截图验收标准</td></tr>
+      <tr><td>任务 tasks.md</td><td>同上</td><td>复选框 <code>- [ ]</code>，单任务 ≤ 2 小时且可独立验证</td></tr>
+      <tr><td>增量 spec</td><td><code>…/specs/&lt;name&gt;/spec.md</code></td><td><code>## ADDED / MODIFIED / REMOVED Requirements</code> 三段式，每条 Requirement 带 <code>### Scenario:</code></td></tr>
+      <tr><td>状态 .impetus.yaml</td><td>change 根目录</td><td>由 guard 维护，断点恢复时重跑 Step 0/Step 1 判定阶段</td></tr>
+    </tbody>
+  </table>
+  <p>提交约定：<code>git commit -m "feat(&lt;change&gt;): 中文描述"</code>；<code>issue_id</code> 为 null 时不自动提交。</p>
+
+  <h2>新增一个命令（推荐做法）</h2>
+  <ol class="steps">
+    <li>在 <code>PrintServices.cs</code> 增加 <code>public string Xxx(string args)</code>：用 <code>ParseObject(args)</code> 取参数，成功返回 <code>Result.success(...)</code>，失败返回 <code>Result.error(...)</code>。</li>
+    <li>把命令名加入 <code>config/appsettings.json</code> 的 <code>allowedCommands</code>（否则网络调用返回 403），并调用 <code>CommandDispatcher.ResetCache()</code> 或在设置页保存一次。</li>
+    <li>在 delta spec 里补 <code>## ADDED Requirements</code> + <code>### Scenario:</code>，在 <code>tasks.md</code> 勾选对应任务。</li>
+    <li>WS 与 <code>POST /api/command</code> 自动可获得该能力；如需便捷端点，在 <code>WebServerService.MapApi</code> 增加 <code>app.MapPost</code>。</li>
+    <li>更新 <a href="ws.html">ws.html</a> / <a href="api.html">api.html</a> 的命令表与示例。</li>
+  </ol>
+  <div class="note"><strong>单一分派入口：</strong> UI、WebSocket、REST 全部调用 <code>CommandDispatcher.Execute</code>，不要在页面里另写一套业务逻辑。这样命令行为一致、白名单统一、文档不漂移。</div>
+
+  <h2>配置项参考</h2>
+  <table>
+    <thead><tr><th>键</th><th>默认</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>wsHost / wsPort</code></td><td><code>0.0.0.0 / 19860</code></td><td>WebSocket 监听地址；建议生产改 <code>127.0.0.1</code> 或限制防火墙</td></tr>
+      <tr><td><code>webHost / webPort</code></td><td><code>127.0.0.1 / 19861</code></td><td>文档站与 REST 监听地址</td></tr>
+      <tr><td><code>defaultPrinter</code></td><td><code>""</code></td><td>空 = 跟随系统默认</td></tr>
+      <tr><td><code>autoStart</code></td><td><code>true</code></td><td>写 HKCU Run，无需管理员权限</td></tr>
+      <tr><td><code>logLevel</code></td><td><code>DEBUG</code></td><td>UI 展示用；log4net 分级 appender 见 log4net.config</td></tr>
+      <tr><td><code>cleanMaxAgeDays</code></td><td><code>7</code></td><td>只扫描超过该天数的文件</td></tr>
+      <tr><td><code>cleanMinSizeMB</code></td><td><code>1</code></td><td>小于该体积的文件不纳入扫描</td></tr>
+      <tr><td><code>useRecycleBin</code></td><td><code>true</code></td><td>删除时移入回收站</td></tr>
+      <tr><td><code>cleanWhitelist</code></td><td>系统目录 / 桌面 / 文档 / 下载 / AppData</td><td>保护目录，支持环境变量</td></tr>
+      <tr><td><code>allowedCommands</code></td><td>20 项</td><td>反射分派白名单</td></tr>
+    </tbody>
+  </table>
+
+  <h2>依赖矩阵（全部最新稳定版）</h2>
+  <table>
+    <thead><tr><th>依赖</th><th>旧版</th><th>当前</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>目标框架</td><td><code>net8.0-windows</code></td><td><code>net10.0-windows</code> <span class="badge ok">LTS</span></td><td>最新长期支持版</td></tr>
+      <tr><td>Fleck</td><td>1.2.0</td><td>1.2.0</td><td>已是该库最后一个稳定版</td></tr>
+      <tr><td>iTextSharp</td><td>5.5.13.3</td><td>5.5.13.6</td><td>保留为 PDF 内容解析扩展点；NU1701 已知（.NET Framework 兼容包）</td></tr>
+      <tr><td>log4net</td><td>2.0.17</td><td>2.0.17</td><td>2.x 最新稳定；v3 改命名空间且会破坏现有 appender 配置</td></tr>
+      <tr><td>Newtonsoft.Json</td><td>13.0.3</td><td>13.0.4</td><td>最新稳定（14.x 仍为 beta）</td></tr>
+      <tr><td>Microsoft.Extensions.Logging.Log4Net.AspNetCore</td><td>8.0.0</td><td><strong>已移除</strong></td><td>项目从未使用 <code>AddLog4Net()</code>；其 10.0.0 强制依赖 log4net ≥3.3.0，8.0.0 会把 ASP.NET Core 8 程序集带入 net10 应用</td></tr>
+      <tr><td>ASP.NET Core (Kestrel)</td><td>—</td><td>随 .NET 10 共享框架</td><td>通过 <code>FrameworkReference</code> 引入，无需 NuGet 版本号</td></tr>
+    </tbody>
+  </table>
+
+  <h2>本次变更摘要</h2>
+  <ul>
+    <li>产品定名：英文名 <strong>PipPrinter</strong>，中文名 <strong>小莱打印助手</strong>；程序集 / 项目 / 解决方案统一为 <code>PipPrinter</code>，可执行文件 <code>PipPrinter.exe</code></li>
+    <li>主窗口默认展示「打印队列」页；双击托盘图标显示主窗口（不再切换隐藏），最小化/关闭收回托盘</li>
+    <li>升级 .NET 8 → .NET 10 LTS，依赖升级到各自最新稳定版并移除冲突死依赖</li>
+    <li>托盘新增 8 项右键菜单；主窗体改为 6 页 TabControl（打印 / 队列 / 打印机 / 磁盘清理 / 设置 / 日志）</li>
+    <li>新增持久化打印队列（顺序消费、失败重试、崩溃恢复、WS 主动推送）</li>
+    <li>新增本机打印机列表与驱动信息、默认切换、测试页</li>
+    <li>新增安全的磁盘清理（白名单、试运行、回收站、导出清单）</li>
+    <li>打印类型从 PDF 扩展到 23 种扩展名，按类型分流到 SumatraPDF / Shell / 无头浏览器</li>
+    <li>新增内嵌 ASP.NET Core 文档站与 REST API</li>
+    <li>反射分派收敛为命令白名单；单实例 Mutex；开机自启改 HKCU 并修正 exe 路径</li>
+  </ul>
+
+  <div class="footer">PipPrinter / 小莱打印助手 v2.0 · /impetus（OpenSpec + Superpowers）</div>
+</main>
+</div>
+</body>
+</html>

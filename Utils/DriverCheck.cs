@@ -1,97 +1,107 @@
 ﻿using System;
-using System.Collections.Generic;
-using log4net;
-using System.Reflection;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
-using System.Runtime.InteropServices.JavaScript;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 
-namespace DuoAssistant.Utils;
-
-public class DriverCheck
+namespace DuoAssistant.Utils
 {
-    private ILog logging = LogManager.GetLogger("");
-    public async void CheckPdfPrinterExist()
+    /// <summary>
+    /// PDF 打印驱动（SumatraPDF）检测与恢复。
+    /// 优先使用随包资源，避免每次冷启动都访问 GitHub；联网下载仅作最后兜底。
+    /// </summary>
+    public class DriverCheck
     {
-        string _directory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lib\\driver");
-        if (!Directory.Exists(_directory))
+        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+
+        public string DriverPath => Path.Combine(
+            DuoAssistant.Services.SettingsStore.Instance.DriverDir, "SumatraPDF.exe");
+
+        /// <summary>同步确保驱动存在；返回是否可用。</summary>
+        public bool EnsureDriver()
         {
-            Directory.CreateDirectory(_directory);
-        }
-        string savePath = Path.Combine(_directory,"SumatraPDF.zip");
-        string targetFile = Path.Combine(_directory, "SumatraPDF.exe");
-        Tools.Logger("开始检测打印插件:"+targetFile);
-        if (!File.Exists(targetFile))
-        {
-            var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Add("Accept","application/vnd.github+json");
-            httpClient.DefaultRequestHeaders.Add("X-GitHub-Api-Version","2022-11-28");
-            httpClient.DefaultRequestHeaders.Add("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0");
             try
             {
-                Tools.Logger("打印插件不存在");
-                String versionCheckUrl = "https://api.github.com/repos/sumatrapdfreader/sumatrapdf/releases/latest";
-                String restString = httpClient.GetAsync(versionCheckUrl).Result.Content.ReadAsStringAsync().Result;
-                JObject repositoryData = (JObject)JsonConvert.DeserializeObject(restString);
-                String tagName = (string)repositoryData["tag_name"];
-                Tools.Logger("版本标签："+tagName);
-                Regex regex = new Regex("[0-9]+\\.[0-9]+\\.[0-9]+");
-                var versionRegex = regex.Matches(tagName);
-                List<String> versions = new List<string>();
-                foreach (Match  item in versionRegex)
+                var target = DriverPath;
+                var dir = Path.GetDirectoryName(target);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                if (File.Exists(target))
                 {
-                    versions.Add(item.Value);
+                    Tools.Logger("PDF 打印驱动已存在: " + target);
+                    return true;
                 }
-                Tools.Logger(versions.Count.ToString());
-                if (versions.Count > 0)
-                {
-                    // String zipUrl = (string)repositoryData["zipball_url"];
-                    String exeFileName = String.Format("SumatraPDF-{0}-64.exe", versions[0]);
-                    String zipUrl = String.Format("https://www.sumatrapdfreader.org/dl/rel/{0}/SumatraPDF-{0}-64.zip",versions[0]);
-                    String tmpFile = Path.Combine(_directory, exeFileName);
-                    Tools.Logger(tmpFile);
-                    Tools.Logger(zipUrl);
-                    if (File.Exists(savePath))
-                    {
-                        File.Delete(savePath);
-                        Tools.Logger("旧的驱动文件已经删除");
-                    }
-                    
-                    if (File.Exists(tmpFile))
-                    {
-                        File.Delete(tmpFile);
-                        Tools.Logger("存在旧的驱动器已经删除");
-                    }
 
-                    var contentStream = httpClient.GetAsync(zipUrl).Result.Content.ReadAsStreamAsync().Result;
-                    var fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write, FileShare.Delete, 4096, true);
-                    await contentStream.CopyToAsync(fileStream);
-                    contentStream.Close();
-                    fileStream.Close();
-                    Tools.Logger("开始解压并配置");
-                    ZipFile.ExtractToDirectory(savePath,_directory);
-                    File.Move(tmpFile,targetFile);
-                }
-                else
+                // 1) 随包资源
+                var bundled = Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, "pdfreader", "SumatraPDF.exe");
+                if (File.Exists(bundled))
                 {
-                    Tools.Logger("未发现可用的驱动版本");
+                    File.Copy(bundled, target, true);
+                    Tools.Logger("已从随包资源恢复 PDF 打印驱动");
+                    return true;
                 }
-                
+
+                // 2) 联网下载最新 release
+                Tools.Logger("驱动缺失，尝试在线获取 SumatraPDF …");
+                return DownloadLatest(target);
             }
-            catch(Exception e)
+            catch (Exception ex)
             {
-                Tools.Logger(e.Message.ToString());
-                Tools.Logger(e.StackTrace);
+                Tools.Logger("驱动恢复失败: " + ex.Message);
+                return false;
             }
         }
-        else
+
+        /// <summary>保留旧入口名，供原反射协议与旧代码调用。</summary>
+        public void CheckPdfPrinterExist() => EnsureDriver();
+
+        private bool DownloadLatest(string target)
         {
-            Tools.Logger("the pdf print driver is exist");
+            try
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get,
+                    "https://api.github.com/repos/sumatrapdfreader/sumatrapdf/releases/latest");
+                req.Headers.Add("Accept", "application/vnd.github+json");
+                req.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
+                req.Headers.Add("User-Agent", "PipPrinter/2.0");
+
+                var resp = Http.SendAsync(req).GetAwaiter().GetResult();
+                if (!resp.IsSuccessStatusCode) return false;
+                var json = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                var tag = (string)((JObject)JsonConvert.DeserializeObject(json))["tag_name"];
+                var match = Regex.Match(tag ?? "", @"\d+\.\d+(\.\d+)?");
+                if (!match.Success) return false;
+
+                var version = match.Value;
+                var zipUrl = string.Format(
+                    "https://www.sumatrapdfreader.org/dl/rel/{0}/SumatraPDF-{0}-64.zip", version);
+                var zipPath = Path.Combine(Path.GetDirectoryName(target), "SumatraPDF.zip");
+                var bytes = Http.GetByteArrayAsync(zipUrl).GetAwaiter().GetResult();
+                File.WriteAllBytes(zipPath, bytes);
+
+                var extractDir = Path.Combine(Path.GetDirectoryName(target), "_extract");
+                if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
+                ZipFile.ExtractToDirectory(zipPath, extractDir, true);
+
+                foreach (var f in Directory.GetFiles(extractDir, "SumatraPDF*.exe", SearchOption.AllDirectories))
+                {
+                    File.Copy(f, target, true);
+                    break;
+                }
+                try { Directory.Delete(extractDir, true); } catch { /* 忽略清理失败 */ }
+                try { File.Delete(zipPath); } catch { /* 忽略清理失败 */ }
+
+                var ok = File.Exists(target);
+                Tools.Logger(ok ? "驱动下载完成: " + version : "驱动下载后仍未找到 exe");
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                Tools.Logger("在线下载驱动失败: " + ex.Message);
+                return false;
+            }
         }
-        
     }
 }

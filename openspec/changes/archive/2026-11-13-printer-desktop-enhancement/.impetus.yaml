@@ -1,0 +1,35 @@
+# .impetus.yaml — change state
+# 由 /impetus-open 创建，各阶段 guard 维护
+schema: impetus-state
+version: "1"
+change: printer-desktop-enhancement
+issue_id: null
+created_at: "2026-11-13T13:45:00+08:00"
+
+# 阶段流转：open → design → build → verify → archive
+phase: archive
+build_mode: mainline
+isolation: none
+build_pause: null
+plan: docs/superpowers/plans/printer-desktop-enhancement.md
+
+artifacts:
+  - openspec/changes/printer-desktop-enhancement/proposal.md
+  - openspec/changes/printer-desktop-enhancement/design.md
+  - openspec/changes/printer-desktop-enhancement/tasks.md
+  - openspec/changes/printer-desktop-enhancement/specs/printer-desktop-enhancement/spec.md
+
+# 阶段历史（由 guard 追加）
+history:
+  - { phase: open, at: "2026-11-13T13:45:00+08:00", by: "manual" }
+  - { phase: design, at: "2026-11-13T13:45:30+08:00", by: "manual" }
+  - { phase: build, at: "2026-11-13T13:46:00+08:00", by: "manual" }
+  - { phase: verify, at: "2026-11-13T15:05:00+08:00", by: "manual" }
+  - { phase: archive, at: "2026-11-13T15:12:00+08:00", by: "manual" }
+
+notes: |
+  目标：.NET 10 LTS + 品牌命名 PipPrinter / 小莱打印助手 + 托盘右键 UI/UX +
+  默认打印队列页 + 托盘双击显示主窗口 + 打印队列 + 打印机列表 + 磁盘清理 +
+  多类型文件打印 + 内嵌 ASP.NET Core Web 文档服务 + 依赖升级。
+  验收报告：docs/superpowers/verify/printer-desktop-enhancement.md
+  结论：通过；git push 待用户确认。

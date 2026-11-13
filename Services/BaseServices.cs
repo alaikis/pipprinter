@@ -1,71 +1,59 @@
-﻿using Microsoft.Win32;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Reflection;
-using log4net;
+﻿using System;
+using System.Windows.Forms;
+using DuoAssistant.Utils;
+using Microsoft.Win32;
 
 namespace DuoAssistant.Services
 {
-    class BaseServices
+    /// <summary>系统级集成：开机自启。</summary>
+    public class BaseServices
     {
-        ILog logging = LogManager.GetLogger("");
+        private const string RunPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+        private static string AppName => "PipPrinter";
+
         /// <summary>
-        /// 是否设置为开机启动
+        /// 写入 HKCU\...\Run（无需管理员权限）。原实现写 HKLM 且路径缺少 .exe，
+        /// 在普通权限下会静默失败，这里一并修正。
         /// </summary>
         public void StartWhenSystemStart()
         {
-            bool _exist = false;
-            String appName = System.Reflection.Assembly.GetExecutingAssembly().GetName().Name.ToString();
             try
             {
-                RegistryKey local = Registry.LocalMachine;
-                RegistryKey runs = local.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
-                if (runs == null)
+                using (var key = Registry.CurrentUser.OpenSubKey(RunPath, true) ??
+                                 Registry.CurrentUser.CreateSubKey(RunPath, true))
                 {
-                    RegistryKey key2 = local.CreateSubKey("SOFTWARE");
-                    RegistryKey key3 = key2.CreateSubKey("Microsoft");
-                    RegistryKey key4 = key3.CreateSubKey("Windows");
-                    RegistryKey key5 = key4.CreateSubKey("CurrentVersion");
-                    RegistryKey key6 = key5.CreateSubKey("Run");
-                    runs = key6;
+                    key?.SetValue(AppName, "\"" + Application.ExecutablePath + "\"");
                 }
-                string[] runsName = runs.GetValueNames();
-                foreach (string strName in runsName)
-                {
-                    if (strName ==appName)
-                    {
-                        _exist = true;
-                    }
-                }
+                Tools.Logger("已设置开机自启: " + Application.ExecutablePath);
+            }
+            catch (Exception ex)
+            {
+                Tools.Logger("设置开机自启失败: " + ex.Message);
+            }
+        }
 
-            }
-            catch
+        public void DisableAutoStart()
+        {
+            try
             {
-                _exist = false;
+                using (var key = Registry.CurrentUser.OpenSubKey(RunPath, true))
+                    key?.DeleteValue(AppName, false);
+                Tools.Logger("已取消开机自启");
             }
-            if (!_exist)
+            catch (Exception ex)
             {
-                String softpath = AppDomain.CurrentDomain.BaseDirectory + System.Reflection.Assembly.GetExecutingAssembly().GetName().Name.ToString();
-                try
-                {
-                    RegistryKey local = Registry.LocalMachine;
-                    RegistryKey key = local.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", true);
-                    if (key == null)
-                    {
-                        local.CreateSubKey("SOFTWARE//Microsoft//Windows//CurrentVersion//Run");
-                    }
-                    key.SetValue(appName, softpath);
-                    key.Close();
-                }
-                catch (Exception e)
-                {
-                    logging.Debug(e.Message.ToString());
-                    //throw;
-                }
+                Tools.Logger("取消开机自启失败: " + ex.Message);
             }
+        }
+
+        public bool IsAutoStartEnabled()
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(RunPath, false))
+                    return key?.GetValue(AppName) != null;
+            }
+            catch { return false; }
         }
     }
 }

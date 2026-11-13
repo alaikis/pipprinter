@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>REST API · PipPrinter</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">PipPrinter<small>小莱打印助手 · 开发与使用文档 v2.0</small></div>
+  <nav class="nav">
+    <div class="group">开始</div>
+    <a href="index.html">总览与快速开始</a>
+    <a href="ws.html">WebSocket 协议</a>
+    <a class="active" href="api.html">REST API</a>
+    <div class="group">开发</div>
+    <a href="dev.html">构建与开发规范</a>
+    <a href="/api/status">运行状态 (JSON)</a>
+    <a href="/api/commands">命令清单 (JSON)</a>
+  </nav>
+  <div class="sidefoot">Kestrel / ASP.NET Core 10 · 端口 19861</div>
+</aside>
+
+<main class="main">
+  <h1>REST API</h1>
+  <p class="lead">内嵌 Kestrel 服务，默认 <code>http://127.0.0.1:19861</code>。已启用 CORS，静态文档站与 API 共用同一端口。所有 API 与 <a href="ws.html">WebSocket 命令</a> 共用 <code>CommandDispatcher</code>，响应结构完全一致。</p>
+
+  <h2>端点一览</h2>
+  <table>
+    <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/</code></td><td>文档站首页（静态文件）</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/status</code></td><td>应用版本、框架、端口、默认打印机、支持类型、队列摘要、运行时长</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/commands</code></td><td>当前允许的命令清单</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/printers</code></td><td>本机打印机列表与详情</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/queue</code></td><td>打印队列全部任务与摘要</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/disk</code></td><td>各磁盘容量与扫描根目录</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/docs</code></td><td>文档站 HTML 页面清单</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/command</code></td><td><strong>通用命令入口</strong>：body 里带 <code>cmd</code>，等价于 WebSocket</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/print</code></td><td>便捷入口：直接把 body 当作 <code>QueuePrint</code> 参数</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/clean/scan</code></td><td>便捷入口：扫描磁盘，body 可空</td></tr>
+    </tbody>
+  </table>
+
+  <h2>通用命令入口</h2>
+  <pre><code>curl -X POST http://127.0.0.1:19861/api/command \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"GetPrinterDetail"}'
+
+# 等价于
+curl http://127.0.0.1:19861/api/printers</code></pre>
+  <p>body 必须是 JSON 对象且包含 <code>cmd</code>；不在 <code>allowedCommands</code> 白名单里的命令返回 <code>403</code>。</p>
+
+  <h2>提交打印任务</h2>
+  <pre><code>curl -X POST http://127.0.0.1:19861/api/print \
+  -H "Content-Type: application/json" \
+  -d '{"path":"C:\\labels\\a.pdf","printer":"HP LaserJet","copies":2}'
+
+# 响应
+{
+  "code": 200,
+  "data": { "jobId": "3f9a...", "job": { "status": "pending", ... } },
+  "error": "已加入打印队列",
+  "operator": "QueuePrint",
+  "uuid": "...",
+  "timestamp": "1763019000"
+}</code></pre>
+  <p><code>path</code> 也可以是 <code>http(s)</code> URL；<code>printer</code> 留空则使用系统默认打印机。</p>
+
+  <h2>扫描与清理</h2>
+  <pre><code>curl -X POST http://127.0.0.1:19861/api/command \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"ScanDisk","maxAgeDays":7,"minSizeMB":1}'
+
+# 拿到 items[].Path 后，先试运行
+curl -X POST http://127.0.0.1:19861/api/command \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"CleanDisk","paths":["C:\\...\\temp\\old.tmp"],"dryRun":true}'
+
+# 确认无误再真正删除
+curl -X POST http://127.0.0.1:19861/api/command \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"CleanDisk","paths":["C:\\...\\temp\\old.tmp"],"dryRun":false,"useRecycleBin":true}'</code></pre>
+
+  <div class="warn">
+    <strong>安全约束：</strong> <code>CleanDisk</code> 默认 <code>dryRun=true</code>；只有显式 <code>false</code> 才删除。
+    服务端会二次校验路径必须位于允许根目录（系统 Temp、应用 <code>temp/</code> 与 <code>log/</code>）且不在
+    <code>cleanWhitelist</code> 保护的目录内。<strong>不接受任意路径删除。</strong>
+  </div>
+
+  <h2>状态查询</h2>
+  <pre><code>curl http://127.0.0.1:19861/api/status</code></pre>
+  <p>返回示例字段：<code>app</code>、<code>version</code>、<code>framework</code>、<code>websocket</code>、<code>webDocs</code>、<code>defaultPrinter</code>、<code>supportedTypes</code>、<code>queue</code>、<code>uptimeSeconds</code>。</p>
+
+  <h2>错误码</h2>
+  <table>
+    <thead><tr><th>code</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>200</code></td><td>成功</td></tr>
+      <tr><td><code>400</code></td><td>参数缺失、JSON 非法、业务校验失败</td></tr>
+      <tr><td><code>403</code></td><td>命令不在 <code>allowedCommands</code> 白名单</td></tr>
+      <tr><td><code>404</code></td><td>命令或任务不存在</td></tr>
+      <tr><td><code>500</code></td><td>服务端异常，详见 <code>error</code> 与应用日志</td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">PipPrinter / 小莱打印助手 v2.0 · REST API</div>
+</main>
+</div>
+</body>
+</html>

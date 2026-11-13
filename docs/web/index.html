@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>总览 · PipPrinter</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">PipPrinter<small>小莱打印助手 · 开发与使用文档 v2.0</small></div>
+  <nav class="nav">
+    <div class="group">开始</div>
+    <a class="active" href="index.html">总览与快速开始</a>
+    <a href="ws.html">WebSocket 协议</a>
+    <a href="api.html">REST API</a>
+    <div class="group">开发</div>
+    <a href="dev.html">构建与开发规范</a>
+    <a href="/api/status">运行状态 (JSON)</a>
+    <a href="/api/commands">命令清单 (JSON)</a>
+  </nav>
+  <div class="sidefoot">
+    .NET 10 LTS · WinForms<br>
+    WS <code>:19860</code> · Web <code>:19861</code>
+  </div>
+</aside>
+
+<main class="main">
+  <h1>PipPrinter <small style="font-size:.5em;color:var(--muted);font-weight:400">小莱打印助手</small></h1>
+  <p class="lead">常驻 Windows 系统托盘的本地打印助手：对外提供 WebSocket 指令通道与 REST API，对内提供打印队列、本机打印机管理、磁盘清理与多格式文件打印。</p>
+
+  <div class="note">
+    <strong>这是一份随应用一起运行的本地文档。</strong> 本页由应用内嵌的 ASP.NET Core (Kestrel) 服务托管，
+    地址 <code>http://127.0.0.1:19861</code>；端口可在「设置」页修改。所有接口默认只监听本机（WebSocket 默认监听 <code>0.0.0.0</code> 以便局域网调用）。
+  </div>
+
+  <h2>快速开始</h2>
+  <ol class="steps">
+    <li>启动 <code>PipPrinter.exe</code>。程序不会弹出主窗口，而是在系统托盘出现图标，并弹出气泡提示。</li>
+    <li><strong>双击托盘图标</strong>即可显示主窗口（默认打开「打印队列」页）；最小化或关闭主窗口会收回托盘，只有菜单中的「退出」才真正结束进程。</li>
+    <li><strong>右键托盘图标</strong>：打开主窗口、快速打印、查看队列、打印机列表、磁盘清理、打开本文档、设置、退出共 8 项。</li>
+    <li>切换到「打印」页，选择文件或填写 URL，指定打印机与份数，点击 <em>立即打印</em> 或 <em>加入队列</em>。</li>
+    <li>外部系统可通过 <a href="ws.html">WebSocket</a> 或 <a href="api.html">REST</a> 下发打印指令。</li>
+  </ol>
+
+  <h2>功能一览</h2>
+  <div class="grid">
+    <div class="card"><h3>托盘右键 UI/UX</h3><p>8 项上下文菜单，双击托盘图标显示主窗口；主窗体 6 个 Tab 页面：打印、打印队列（默认）、打印机、磁盘清理、设置、日志。</p></div>
+    <div class="card"><h3>打印队列</h3><p>顺序消费、失败重试、取消/删除、崩溃恢复；队列持久化到 <code>data/queue.json</code>，并通过 WebSocket 主动推送变更。</p></div>
+    <div class="card"><h3>本机打印机列表</h3><p>枚举已安装打印机，展示驱动、端口、纸张规格；一键设为默认、打印测试页。</p></div>
+    <div class="card"><h3>磁盘清理</h3><p>扫描临时目录与大文件，白名单保护、试运行、回收站删除、清单导出；默认 dry-run。</p></div>
+    <div class="card"><h3>多类型文件打印</h3><p>PDF 走 SumatraPDF；Office/图片/文本走系统关联程序；HTML 走无头浏览器转 PDF；支持 URL 直接打印。</p></div>
+    <div class="card"><h3>内嵌 Web 服务</h3><p>Kestrel 静态文档站 + REST 端点；<code>/api/status</code> 可查询运行时状态与队列摘要。</p></div>
+  </div>
+
+  <h2>支持的文件类型</h2>
+  <div>
+    <span class="pill">.pdf</span><span class="pill">.doc</span><span class="pill">.docx</span>
+    <span class="pill">.xls</span><span class="pill">.xlsx</span><span class="pill">.ppt</span>
+    <span class="pill">.pptx</span><span class="pill">.rtf</span><span class="pill">.odt</span>
+    <span class="pill">.png</span><span class="pill">.jpg</span><span class="pill">.jpeg</span>
+    <span class="pill">.bmp</span><span class="pill">.gif</span><span class="pill">.tif</span><span class="pill">.tiff</span>
+    <span class="pill">.html</span><span class="pill">.htm</span><span class="pill">.mhtml</span>
+    <span class="pill">.txt</span><span class="pill">.csv</span><span class="pill">.log</span><span class="pill">.md</span>
+  </div>
+  <p>未知扩展名会交给系统 Shell 的 <code>print</code> 动词兜底；若系统没有可打印该类型的应用，需在客户端手动打开。</p>
+
+  <h2>架构</h2>
+  <div class="tree">外部系统 (ERP / 浏览器 / 脚本)
+   │
+   ├── WebSocket  ws://0.0.0.0:19860 ─┐
+   └── REST       http://127.0.0.1:19861 ─┤
+                                        ▼
+                        CommandDispatcher  (命令白名单)
+                                        │ 反射
+                                        ▼
+                        PrintServices  (20 个命令)
+                          ├── ExtendedPrintService ── SumatraPDF / Shell / Edge headless
+                          ├── PrintQueueService ──── data/queue.json (后台顺序消费)
+                          ├── PrinterService ─────── System.Drawing.Printing + 注册表
+                          ├── DiskCleanerService ─── 白名单 + 回收站
+                          └── SettingsStore ──────── config/appsettings.json
+                                        │
+                                        ▼
+                 WinForms Home (托盘 + 6 页 TabControl) ← 共用同一分派入口</div>
+
+  <h2>默认端口与路径</h2>
+  <table>
+    <thead><tr><th>项</th><th>默认值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>WebSocket</td><td><code>ws://0.0.0.0:19860</code></td><td>兼容原有客户端协议</td></tr>
+      <tr><td>Web 文档 / REST</td><td><code>http://127.0.0.1:19861</code></td><td>本站点</td></tr>
+      <tr><td>配置</td><td><code>config/appsettings.json</code></td><td>端口、默认打印机、清理白名单</td></tr>
+      <tr><td>队列</td><td><code>data/queue.json</code></td><td>崩溃恢复依据</td></tr>
+      <tr><td>临时下载</td><td><code>temp/</code></td><td>URL 打印的落地目录，也是清理目标</td></tr>
+      <tr><td>PDF 驱动</td><td><code>lib/driver/SumatraPDF.exe</code></td><td>缺失时从随包资源恢复，最后才联网下载</td></tr>
+      <tr><td>日志</td><td><code>log/{debug,info,warn,err,fatal}/</code></td><td>log4net 分级滚动</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn">
+    <strong>安全提示：</strong> WebSocket 默认监听 <code>0.0.0.0</code>，请把 <code>19860</code> 限制在可信网络，
+    或在 <code>appsettings.json</code> 把 <code>wsHost</code> 改为 <code>127.0.0.1</code>。
+    命令采用白名单分派（<code>allowedCommands</code>），不在列表内的方法无法被网络调用。
+  </div>
+
+  <div class="footer">PipPrinter / 小莱打印助手 v2.0 · .NET 10 LTS / WinForms · 使用 /impetus（OpenSpec + Superpowers）流程开发</div>
+</main>
+</div>
+</body>
+</html>

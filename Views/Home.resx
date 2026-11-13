@@ -1,50 +1,5 @@
-﻿<root>
-  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
-    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
-    <xsd:element name="root" msdata:IsDataSet="true">
-      <xsd:complexType>
-        <xsd:choice maxOccurs="unbounded">
-          <xsd:element name="metadata">
-            <xsd:complexType>
-              <xsd:sequence>
-                <xsd:element name="value" type="xsd:string" minOccurs="0" />
-              </xsd:sequence>
-              <xsd:attribute name="name" use="required" type="xsd:string" />
-              <xsd:attribute name="type" type="xsd:string" />
-              <xsd:attribute name="mimetype" type="xsd:string" />
-              <xsd:attribute ref="xml:space" />
-            </xsd:complexType>
-          </xsd:element>
-          <xsd:element name="assembly">
-            <xsd:complexType>
-              <xsd:attribute name="alias" type="xsd:string" />
-              <xsd:attribute name="name" type="xsd:string" />
-            </xsd:complexType>
-          </xsd:element>
-          <xsd:element name="data">
-            <xsd:complexType>
-              <xsd:sequence>
-                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
-                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
-              </xsd:sequence>
-              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
-              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
-              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
-              <xsd:attribute ref="xml:space" />
-            </xsd:complexType>
-          </xsd:element>
-          <xsd:element name="resheader">
-            <xsd:complexType>
-              <xsd:sequence>
-                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
-              </xsd:sequence>
-              <xsd:attribute name="name" type="xsd:string" use="required" />
-            </xsd:complexType>
-          </xsd:element>
-        </xsd:choice>
-      </xsd:complexType>
-    </xsd:element>
-  </xsd:schema>
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
   <resheader name="resmimetype">
     <value>text/microsoft-resx</value>
   </resheader>
@@ -57,10 +12,10 @@
   <resheader name="writer">
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
-  <assembly alias="System.Drawing.Common" name="System.Drawing.Common, Version=5.0.0.2, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51" />
-  <data name="notifyIcon1.Icon" type="System.Drawing.Icon, System.Drawing.Common" mimetype="application/x-microsoft.net.object.bytearray.base64">
-    <value>
-      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
-    </value>
-  </data>
+  <!--
+    UI 全部改为代码构建（Views/Home.cs + Views/Pages/*.cs）。
+    原先的 notifyIcon1.Icon 强类型资源引用 System.Drawing.Common v5，
+    在 .NET 10 上反序列化会失败，因此移除；托盘图标改为运行时从
+    Resource/bitbug_favicon.ico 加载，失败时回退到 SystemIcons.Application。
+  -->
 </root>

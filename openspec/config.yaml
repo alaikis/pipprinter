@@ -1,0 +1,29 @@
+schema: spec-driven
+
+# Project context shown to AI when creating artifacts
+context: |
+  Tech stack: .NET 10.0-windows, Windows Forms (WinExe), C#
+  Domain: 桌面打印助手 PipPrinter / 小莱打印助手（原 TinyPrintAssistant）
+  - 托盘驻留工具，提供 WebSocket 服务端（默认 ws://0.0.0.0:19860）接收外部打印指令
+  - 使用 SumatraPDF 作为 PDF 打印驱动，通过 lib\\driver\\SumatraPDF.exe 落地打印
+  - 通过反射分派 JSON 指令 {cmd, label, printer, copies, ...} 到 PrintServices 方法
+  - 依赖 Fleck (WebSocket 服务器), iTextSharp (PDF 解析), log4net (日志), Newtonsoft.Json (JSON), Microsoft.Extensions.Logging.Log4Net.AspNetCore (日志桥接)
+  约定:
+  - 中文注释与日志；命名 PascalCase；服务层放 Services/，工具层放 Utils/，视图层放 Views/
+  - 所有对外 JSON 指令返回统一 Result { code, timestamp, data, error, operator, uuid } 结构
+  - 提交信息格式：`<type> <scope>: <desc>` 中文描述
+
+# Per-artifact rules
+rules:
+  proposal:
+    - 每个 change 必须包含 "Non-goals" 与 "Risks" 两个小节
+    - 提案正文控制在 500 字以内
+  design:
+    - 必须包含 "Decisions"、"Alternatives"、"Consequences" 三个章节
+    - 对涉及 UI/UX 的决策给出可截图验收标准
+  tasks:
+    - 任务块拆分到 ≤2 小时，使用复选框 `- [ ]` 标记
+    - 每个任务必须可独立验证
+  spec:
+    - delta spec 必须用 `## ADDED Requirements` / `## MODIFIED Requirements` / `## REMOVED Requirements` 三段式
+    - 每个 Requirement 必须带一个或多个 `### Scenario:`

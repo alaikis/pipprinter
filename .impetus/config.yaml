@@ -1,0 +1,19 @@
+# Impetus 双星流程（OpenSpec + Superpowers）项目状态
+# 由 /impetus-init 创建。详见 docs/superpowers/ 与 openspec/changes/。
+schema: impetus
+version: "1"
+context_compression: beta
+auto_transition: true
+
+# 当前活跃 change 列表（由 impetus-state.sh 维护；本文件为人类可读镜像）
+active_changes: []
+
+last_archived:
+  - 2026-11-13-printer-desktop-enhancement
+
+# 阶段速查：
+#   open   → 已建 change，未进 design
+#   design → 设计文档已产出
+#   build  → 正在实现（含 build_mode, isolation, plan）
+#   verify → 验收测试中
+#   archive→ 已归档

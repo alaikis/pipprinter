@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- .NET 10 是最新 LTS；保持 WinForms 桌面应用 -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>PipPrinter</AssemblyName>
+    <RootNamespace>PipPrinter</RootNamespace>
+    <AssemblyTitle>小莱打印助手</AssemblyTitle>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+    <Version>2.0.0</Version>
+    <Product>PipPrinter</Product>
+    <Description>PipPrinter / 小莱打印助手 — 托盘常驻的本地打印助手</Description>
+    <Company>alaikis</Company>
+    <!-- iTextSharp / BouncyCastle 是 .NET Framework 兼容包，NU1701 属预期 -->
+    <NoWarn>$(NoWarn);NU1701;WFO5001</NoWarn>
+  </PropertyGroup>
+
+  <!-- Kestrel / ASP.NET Core minimal API 用于内嵌 Web 文档服务，版本随 .NET 10 共享框架 -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Fleck 1.2.0 为该库最后一个稳定版 -->
+    <PackageReference Include="Fleck" Version="1.2.0" />
+    <!-- iTextSharp 最新稳定版（保留作 PDF 内容解析扩展点，NU1701 已知） -->
+    <PackageReference Include="iTextSharp" Version="5.5.13.6" />
+    <!-- log4net 2.x 最新稳定版；v3 改命名空间且会破坏现有 appender 配置 -->
+    <PackageReference Include="log4net" Version="2.0.17" />
+    <!-- Newtonsoft.Json 最新稳定版；14.x 仍为 beta -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!--
+      移除 Microsoft.Extensions.Logging.Log4Net.AspNetCore：
+      1) 项目从未使用 AddLog4Net()，属死依赖；
+      2) 其 10.0.0 版本强制依赖 log4net >= 3.3.0，与本项目 log4net 2.x 冲突；
+      3) 8.0.0 会把 ASP.NET Core 8 程序集带入 net10 应用，存在版本冲突风险。
+    -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="pdfreader\SumatraPDF.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resource\bitbug_favicon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resource\icon.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Remove="log4net.config" />
+    <None Update="config\log4net.config">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="config\appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="docs\web\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Views\Home.resx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

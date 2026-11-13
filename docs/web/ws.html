@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WebSocket 协议 · PipPrinter</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">PipPrinter<small>小莱打印助手 · 开发与使用文档 v2.0</small></div>
+  <nav class="nav">
+    <div class="group">开始</div>
+    <a href="index.html">总览与快速开始</a>
+    <a class="active" href="ws.html">WebSocket 协议</a>
+    <a href="api.html">REST API</a>
+    <div class="group">开发</div>
+    <a href="dev.html">构建与开发规范</a>
+    <a href="/api/status">运行状态 (JSON)</a>
+    <a href="/api/commands">命令清单 (JSON)</a>
+  </nav>
+  <div class="sidefoot">Fleck 1.2.0 · 端口 19860</div>
+</aside>
+
+<main class="main">
+  <h1>WebSocket 协议</h1>
+  <p class="lead">连接 <code>ws://&lt;host&gt;:19860</code>，发送一个 JSON 对象，<code>cmd</code> 指定命令，其余字段为该命令参数。服务端同步返回一条 JSON 响应。</p>
+
+  <div class="note">连接建立后服务端会主动推送一条 <code>operator: "startPrint"</code> 的欢迎消息。之后每当打印队列变化，会向所有连接推送 <code>operator: "QueueChanged"</code> 快照。</div>
+
+  <h2>响应结构（所有命令统一）</h2>
+  <pre><code>{
+  "code": 200,                    // 200 成功 / 400 参数错误 / 403 命令禁止 / 404 未实现 / 500 异常
+  "timestamp": "1763019000",     // Unix 秒
+  "data": { ... },               // 命令返回数据
+  "error": "success",            // 失败时为错误信息
+  "operator": "PrintFile",       // 回显命令名
+  "uuid": "9f3c...",             // 本次响应唯一 ID
+}</code></pre>
+  <p><code>code</code> 非 200 时请读 <code>error</code>；<code>data</code> 可能为 <code>null</code>。</p>
+
+  <h2>命令清单</h2>
+  <table>
+    <thead><tr><th>cmd</th><th>作用</th><th>主要参数</th></tr></thead>
+    <tbody>
+      <tr><td><code>PrintPdf</code></td><td>原有 PDF 打印命令（兼容保留）</td><td><code>label</code>、<code>printer</code>、<code>copies</code>、<code>fit</code>、<code>scale</code>、<code>paperKind</code>、<code>printPages</code></td></tr>
+      <tr><td><code>PrintFile</code></td><td>同步打印任意受支持文件 / URL</td><td><code>path</code>（也可用 <code>label</code>/<code>url</code>）、<code>printer</code>、<code>copies</code> …</td></tr>
+      <tr><td><code>TemplatePrint</code></td><td>模板渲染后入队打印</td><td><code>template</code>（文本或文件路径）、<code>data</code>（<code>{{key}}</code> 占位符）</td></tr>
+      <tr><td><code>QueuePrint</code></td><td>加入打印队列，返回 <code>jobId</code></td><td>同 <code>PrintFile</code></td></tr>
+      <tr><td><code>GetQueue</code></td><td>查询全部任务与队列摘要</td><td>—</td></tr>
+      <tr><td><code>RetryJob</code></td><td>失败任务重试并前置</td><td><code>id</code></td></tr>
+      <tr><td><code>CancelJob</code></td><td>取消等待中的任务</td><td><code>id</code></td></tr>
+      <tr><td><code>ClearQueue</code></td><td>清空队列</td><td><code>finishedOnly</code>（默认 true）</td></tr>
+      <tr><td><code>GetPrinterList</code></td><td>打印机名数组 + 默认 + 详情</td><td>—</td></tr>
+      <tr><td><code>GetPrinterDetail</code></td><td>仅返回详情数组</td><td>—</td></tr>
+      <tr><td><code>SetDefaultPrinter</code></td><td>切换系统默认打印机</td><td><code>printer</code></td></tr>
+      <tr><td><code>PrintTestPage</code></td><td>打印测试页</td><td><code>printer</code>（可空，用当前默认）</td></tr>
+      <tr><td><code>GetPdfDriverConfig</code></td><td>读取 SumatraPDF 配置</td><td>—</td></tr>
+      <tr><td><code>SetPdfPrintDriverConfig</code></td><td>写入 SumatraPDF 配置</td><td><code>config</code></td></tr>
+      <tr><td><code>ScanDisk</code></td><td>扫描可清理文件</td><td><code>maxAgeDays</code>、<code>minSizeMB</code></td></tr>
+      <tr><td><code>CleanDisk</code></td><td>清理文件（默认 dryRun）</td><td><code>paths</code>、<code>dryRun</code>、<code>useRecycleBin</code></td></tr>
+      <tr><td><code>GetDiskInfo</code></td><td>磁盘容量概览</td><td>—</td></tr>
+      <tr><td><code>GetSettings</code></td><td>读取当前配置</td><td>—</td></tr>
+      <tr><td><code>SaveSettings</code></td><td>部分更新配置</td><td>任意配置字段</td></tr>
+      <tr><td><code>GetStatus</code></td><td>运行时状态、版本、支持类型、队列摘要</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p>完整实时清单：<a href="/api/commands"><code>GET /api/commands</code></a>。只有在 <code>config/appsettings.json</code> 的 <code>allowedCommands</code> 中的命令才可被网络调用。</p>
+
+  <h2>示例：打印一个 PDF</h2>
+  <pre><code>// 发送
+{"cmd":"PrintPdf","label":"https://example.com/label.pdf","printer":"HP LaserJet","copies":2,"fit":"fit","scale":"portrait","printPages":"1-"}
+
+// 响应
+{"code":200,"timestamp":"1763019000","data":{"label":"...","printer":"HP LaserJet","engine":"SumatraPDF","message":"已提交到打印机 HP LaserJet"},"error":"print successful!","operator":"Print","uuid":"..."}</code></pre>
+  <p>兼容旧客户端：若 <code>label</code> 以 <code>//</code> 开头会自动补 <code>https:</code>；无协议但形似域名也会补 <code>https://</code>。本地绝对路径不会被误判为 URL。</p>
+
+  <h2>示例：加入队列并轮询</h2>
+  <pre><code>// 1) 入队
+{"cmd":"QueuePrint","path":"C:\\labels\\a.docx","printer":"HP LaserJet","copies":1}
+// → {"code":200,"data":{"jobId":"3f9a...","job":{...,"status":"pending"}}, ...}
+
+// 2) 查询
+{"cmd":"GetQueue"}
+// → {"code":200,"data":{"jobs":[...],"summary":{"total":1,"pending":0,"printing":0,"done":1,"failed":0}}, ...}
+
+// 3) 失败重试
+{"cmd":"RetryJob","id":"3f9a..."}</code></pre>
+
+  <h2>示例：模板打印</h2>
+  <pre><code>{"cmd":"TemplatePrint",
+ "template":"&lt;h1&gt;订单 {{orderNo}}&lt;/h1&gt;&lt;p&gt;收件人：{{name}}&lt;/p&gt;",
+ "data":{"orderNo":"SO-20261113-001","name":"张三"},
+ "printer":"HP LaserJet"}</code></pre>
+  <p>含 HTML 标签时渲染为 <code>.html</code> 走无头浏览器转 PDF，否则渲染为 <code>.txt</code>。</p>
+
+  <h2>浏览器端示例</h2>
+  <pre><code>const ws = new WebSocket('ws://127.0.0.1:19860');
+ws.onopen = () =&gt; ws.send(JSON.stringify({ cmd: 'GetStatus' }));
+ws.onmessage = e =&gt; {
+  const r = JSON.parse(e.data);
+  if (r.operator === 'QueueChanged') console.log('队列变化', r.data.summary);
+  else console.log('响应', r);
+};</code></pre>
+
+  <div class="warn">
+    <strong>磁盘清理默认安全：</strong> <code>CleanDisk</code> 未显式传 <code>"dryRun": false</code> 时只做试运行不删除；
+    且只能删除应用临时目录与系统 Temp 下、不在白名单里的文件。请先用 <code>ScanDisk</code> 拿到路径再提交。
+  </div>
+
+  <div class="footer">PipPrinter / 小莱打印助手 v2.0 · WebSocket 协议</div>
+</main>
+</div>
+</body>
+</html>
