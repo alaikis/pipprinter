@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows.Forms;
 using DuoAssistant.Models;
 using DuoAssistant.Services;
+using DuoAssistant.Utils;
 using Newtonsoft.Json.Linq;
 
 namespace DuoAssistant.Views.Pages
@@ -11,7 +12,9 @@ namespace DuoAssistant.Views.Pages
     /// <summary>「打印队列」页：顺序任务、状态、失败重试。</summary>
     public class QueueTab : UserControl, IRefreshable
     {
-        private readonly ListView _list = Ui.List("任务 ID", "文件", "打印机", "份数", "状态", "入队时间", "完成时间", "错误");
+        private readonly ListView _list = Ui.List(
+            L10n.T("任务 ID"), L10n.T("文件"), L10n.T("打印机"), L10n.T("份数"),
+            L10n.T("状态"), L10n.T("入队时间"), L10n.T("完成时间"), L10n.T("错误"));
         private readonly Label _summary = Ui.Label("", true);
         private readonly Timer _timer = new Timer { Interval = 2000 };
 
@@ -30,12 +33,12 @@ namespace DuoAssistant.Views.Pages
             _list.Columns[7].Width = 260;
 
             var bar = Ui.Toolbar(
-                Ui.Button("刷新", (s, e) => RefreshData(), 80),
-                Ui.Button("重试选中", (s, e) => Act("RetryJob"), 100),
-                Ui.Button("取消选中", (s, e) => Act("CancelJob"), 100),
-                Ui.Button("删除选中", (s, e) => RemoveSelected(), 100),
-                Ui.Button("清空已完成", (s, e) => Clear(true), 110),
-                Ui.Button("清空全部", (s, e) => Clear(false), 100),
+                Ui.Button(L10n.T("刷新"), (s, e) => RefreshData(), 80),
+                Ui.Button(L10n.T("重试选中"), (s, e) => Act("RetryJob"), 100),
+                Ui.Button(L10n.T("取消选中"), (s, e) => Act("CancelJob"), 100),
+                Ui.Button(L10n.T("删除选中"), (s, e) => RemoveSelected(), 100),
+                Ui.Button(L10n.T("清空已完成"), (s, e) => Clear(true), 110),
+                Ui.Button(L10n.T("清空全部"), (s, e) => Clear(false), 100),
                 _summary);
 
             var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
@@ -62,7 +65,7 @@ namespace DuoAssistant.Views.Pages
             {
                 var item = new ListViewItem(j.Id);
                 item.SubItems.Add(j.FileName);
-                item.SubItems.Add(string.IsNullOrWhiteSpace(j.Printer) ? "(默认)" : j.Printer);
+                item.SubItems.Add(string.IsNullOrWhiteSpace(j.Printer) ? L10n.T("(默认)") : j.Printer);
                 item.SubItems.Add(j.Copies.ToString());
                 item.SubItems.Add(StatusText(j.Status));
                 item.SubItems.Add(j.EnqueuedAt.ToString("MM-dd HH:mm:ss"));
@@ -75,7 +78,7 @@ namespace DuoAssistant.Views.Pages
             }
             _list.EndUpdate();
 
-            _summary.Text = string.Format("共 {0} · 等待 {1} · 打印中 {2} · 完成 {3} · 失败 {4}",
+            _summary.Text = L10n.F("共 {0} · 等待 {1} · 打印中 {2} · 完成 {3} · 失败 {4}",
                 sum["total"], sum["pending"], sum["printing"], sum["done"], sum["failed"]);
         }
 
@@ -83,11 +86,11 @@ namespace DuoAssistant.Views.Pages
         {
             switch (s)
             {
-                case JobStatus.Pending: return "等待中";
-                case JobStatus.Printing: return "打印中";
-                case JobStatus.Done: return "已完成";
-                case JobStatus.Failed: return "失败";
-                case JobStatus.Cancelled: return "已取消";
+                case JobStatus.Pending: return L10n.T("等待中");
+                case JobStatus.Printing: return L10n.T("打印中");
+                case JobStatus.Done: return L10n.T("已完成");
+                case JobStatus.Failed: return L10n.T("失败");
+                case JobStatus.Cancelled: return L10n.T("已取消");
                 default: return s;
             }
         }
@@ -131,7 +134,7 @@ namespace DuoAssistant.Views.Pages
         private void Clear(bool finishedOnly)
         {
             if (!finishedOnly &&
-                MessageBox.Show("确认清空全部队列任务？正在打印的任务会保留。", "确认",
+                MessageBox.Show(L10n.T("确认清空全部队列任务？正在打印的任务会保留。"), L10n.T("确认"),
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             CommandDispatcher.Execute("ClearQueue",
                 new JObject { ["finishedOnly"] = finishedOnly }.ToString());

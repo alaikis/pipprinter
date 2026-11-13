@@ -68,6 +68,9 @@ makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrin
   </ol>
   <div class="warn"><strong>首次发布：</strong> 仓库需在 Gitee 控制台开通 <strong>Gitee Go 流水线</strong>，并在仓库「环境变量」配置 GITEE_API_TOKEN（或允许 release@gitee 步骤使用内置发布令牌）。流水线保存后会往 <code>.workflow/</code> 目录提交 yaml。</div>
 
+  <h2>多语言（自动适配）</h2>
+  <p class="lead">UI 支持简体中文 / English。默认 <code>language: "auto"</code>——启动时检测操作系统 UI 语言：<code>zh*</code> → 简体中文，其余语言 → <strong>英文兜底</strong>。可在「设置 → 界面语言」固定为 <code>zh-CN</code> / <code>en</code>（写入 <code>config/appsettings.json</code> 的 <code>language</code> 字段，重启生效）。<code>GET /api/status</code> 返回 <code>language / languageConfigured / languageDetected</code> 三字段便于诊断。</p>
+
   <h2>本机指纹（跨浏览器 / 会话稳定）</h2>
   <p>命令 <code>GetMachineFingerprint</code>（WS / <code>POST /api/command</code>）与 REST <code>GET /api/machine</code> 返回 24 位前缀指纹，由 <code>HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid</code> + C 盘卷序列号 + OS 版本 + 当前用户名做 SHA1 生成，并写入 <code>config/appsettings.json</code> 的 <code>machineId</code> 字段。用途：识别「这台机器」并作为打印习惯 / 打印机偏好的 machine-key；跨浏览器、跨账号会话下指纹不变。</p>
   <pre><code>curl http://127.0.0.1:19861/api/machine
