@@ -39,3 +39,27 @@
 3. 推送 tag 后流水线应自动触发；也可手动在 Gitee 网页编辑流水线（代码视图）保存确认识别
 4. 手动发版（不等流水线）：Gitee Release 页创建 v2.0.0，上传 `dist/PipPrinter-win-x64-v2.0.0.zip` 与 `dist/latest.json`
 5. latest.json 的 url 用 `releases/download/v2.0.0/...`；客户端 UpdateManifestUrl 指向 `releases/latest/download/latest.json`（最新 release）
+
+---
+
+## 追加验收 · v1.00.001 重建 + 自动更新端到端实测（2026-11-14 05:05）
+
+### 流水线（Gitee Go）实测
+- 用户网页创建流水线后，完整配置写入已注册的 `流水线-202611140444.yml`（保留唯一标识），删除未注册副本
+- tag `v1.00.001` 推送 → 流水线自动构建（约 3 分钟）→ 自动创建 Gitee Release + 附件（zip + latest.json）
+- 强制前移 tag 重建 Release 成功（`allowUpdate: true`），sha256 更新为 `e907352a…203a6`，version 字段无前导空格（printf 单行修复生效）
+
+### 自动更新端到端实测（真实 Gitee 链路）
+| 步骤 | 结果 |
+|---|---|
+| 旧实例 v1.00.000 启动 | `/api/status` version=1.00.000 |
+| `GET /api/update/check` | hasUpdate=True, remote=1.00.001（经 API v5 解析 Release 附件直链） |
+| `POST /api/update/apply` | 200, installed=True（下载 68MB → SHA256 校验 → 旧 exe 改名让位 → 新 exe 就位） |
+| 重启后 | version=**1.00.001** ✅ |
+| `PipPrinter.exe.old-*` 残留 | 0（启动时 CleanupLeftovers 清理）✅ |
+| machineId 用户数据 | PP-6218b020… 保持不变（config/ 未触碰）✅ |
+
+### 修复的缺陷
+1. Gitee 不支持 `/releases/latest/download/` 别名 → 改为 API v5 解析最新 Release 的 latest.json 附件地址
+2. `Directory.Move` 移动安装目录必失败（运行中 exe 镜像锁 + log4net 日志句柄）→ 改为「旧 exe 改名让位 + 新 exe 就位 + 仅覆盖 docs/pdfreader/Resource」策略，带回滚
+3. YAML 折叠块把 shell 续行符 `\` 折成空格注入 version 字段 → printf 改单行
