@@ -10,7 +10,9 @@
         public const string NameCn = "小莱打印助手";
         public const string Title = "PipPrinter — 小莱打印助手";
         public const string Exe = "PipPrinter.exe";
+        public const string Company = "Alaikis Limited";
+        public const string CompanyUrl = "https://alaikis.com";
         // 版本规范 vMAJOR.FEATURE.PATCH：补丁 001→002；大变更 FEATURE+1；重大重构 MAJOR+1
-        public const string Version = "1.00.001";
+        public const string Version = "1.00.002";
     }
 }

@@ -28,12 +28,19 @@ stages:
           - dotnet restore
           - dotnet build -c Release -p:Version=${VERSION} -p:EnableWindowsTargeting=true
           - dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version=${VERSION} -p:EnableWindowsTargeting=true -o ./release/publish
+          - rm -f ./release/publish/PipPrinter.pdb
           - mkdir -p ./out
+          - '# 制品1：绿色便携版 zip'
           - (cd ./release/publish && zip -r ../../out/${PKG} .)
-          - '# 生成自动更新清单 latest.json（版本号去 v 前缀；printf 必须单行，避免 YAML 折叠块注入空格）'
+          - '# 制品2：NSIS 安装向导 exe（Linux 原生 makensis，双语界面、每用户安装免管理员；SEP=/ 为 Linux 路径分隔符）'
+          - apt-get update -qq && apt-get install -y -qq nsis > /dev/null
+          - cd installer && makensis -DVERSION=${VERSION} -DPUBLISH_DIR=../release/publish -DSEP=/ PipPrinter.nsi && cd ..
+          - mv ./installer/PipPrinter-Setup-v${VERSION}.exe ./out/
+          - '# 生成自动更新清单 latest.json（printf 必须单行，避免 YAML 折叠块注入空格）'
           - SHA=$(shasum -a 256 ./out/${PKG} | awk '{print $1}')
           - SIZE=$(wc -c < ./out/${PKG})
-          - printf '{"version":"%s","url":"https://gitee.com/alaikiscom/pipprinter/releases/download/%s/%s","sha256":"%s","size":%s,"notes":"PipPrinter %s (win-x64)","publishedAt":"%s"}' "${VERSION}" "${GITEE_BRANCH}" "${PKG}" "${SHA}" "${SIZE}" "${VERSION}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ./out/latest.json
+          - SETUP=PipPrinter-Setup-v${VERSION}.exe
+          - printf '{"version":"%s","url":"https://gitee.com/alaikiscom/pipprinter/releases/download/%s/%s","setupUrl":"https://gitee.com/alaikiscom/pipprinter/releases/download/%s/%s","sha256":"%s","size":%s,"notes":"PipPrinter %s (win-x64 portable + setup)","publishedAt":"%s"}' "${VERSION}" "${GITEE_BRANCH}" "${PKG}" "${GITEE_BRANCH}" "${SETUP}" "${SHA}" "${SIZE}" "${VERSION}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ./out/latest.json
           - cat ./out/latest.json
         artifacts:
           - name: PIPPRINTER_RELEASE
@@ -60,6 +67,7 @@ stages:
           - PIPPRINTER_RELEASE
         assertFiles:
           - PipPrinter-win-x64-${GITEE_BRANCH}.zip
+          - PipPrinter-Setup-${GITEE_BRANCH}.exe
           - latest.json
         prerelease: false
         allowUpdate: true

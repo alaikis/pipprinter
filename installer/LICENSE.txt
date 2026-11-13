@@ -1,0 +1,29 @@
+﻿PipPrinter / 小莱打印助手
+Copyright (c) 2026 Alaikis Limited. All rights reserved.
+https://alaikis.com
+
+1. 授权
+   本软件由 Alaikis Limited（以下简称"本公司"）开发并提供。
+   在遵守以下条款的前提下，本公司授予您免费安装、使用本软件的权利。
+
+2. 限制
+   未经本公司书面许可，不得对本软件进行反向工程、反编译或反汇编，
+   不得去除或篡改版权标识，不得将本软件用于违法用途。
+
+3. 免责声明
+   本软件按"现状"提供，不附带任何明示或默示的保证。
+   对于因使用本软件造成的任何直接或间接损失，本公司不承担责任。
+   打印行为由本机打印机驱动与操作系统完成，本软件仅作指令转发。
+
+4. 隐私
+   本软件完全在本地运行，不收集、不上传任何用户数据。
+   更新检查仅访问本公司发布的 Gitee Release 页面获取版本清单。
+
+5. 其他
+   本协议受中华人民共和国法律管辖。本公司保留随时修订本协议的权利。
+
+--- English Summary ---
+This software is developed by Alaikis Limited and licensed free of charge.
+You may not reverse engineer, decompile, or disassemble this software.
+The software is provided "AS IS", without warranty of any kind.
+It runs entirely locally; no user data is collected or uploaded.
