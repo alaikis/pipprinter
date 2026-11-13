@@ -113,6 +113,8 @@ namespace DuoAssistant
             AddMenuItem("磁盘清理", (s, e) => ShowMain(3));
             _menu.Items.Add(new ToolStripSeparator());
             AddMenuItem("打开文档站点", (s, e) => OpenDocs());
+            AddMenuItem("查看本机指纹", (s, e) => ShowMachineFingerprint());
+            AddMenuItem("检查更新", (s, e) => CheckForUpdate());
             AddMenuItem("设置", (s, e) => ShowMain(4));
             _menu.Items.Add(new ToolStripSeparator());
             AddMenuItem("退出", (s, e) => ExitApp());
@@ -197,6 +199,69 @@ namespace DuoAssistant
             {
                 MessageBox.Show("无法打开文档站点：" + ex.Message, "提示",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void ShowMachineFingerprint()
+        {
+            try
+            {
+                var res = JObject.Parse(CommandDispatcher.Execute("GetMachineFingerprint", "{}"));
+                var data = res["data"] as JObject;
+                var msg = "本机指纹（跨浏览器/会话稳定）\n" +
+                          "machineId: " + data?["machineId"] + "\n" +
+                          "machineGuid: " + data?["machineGuid"] + "\n" +
+                          "volumeSerial: " + data?["volumeSerial"] + "\n" +
+                          "OS: " + data?["os"] + "\n" +
+                          "user: " + data?["user"] + "\n" +
+                          "app: " + data?["app"] + " v" + data?["version"];
+                MessageBox.Show(msg, Brand.NameCn + " · 本机指纹",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("获取本机指纹失败：" + ex.Message, "提示",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void CheckForUpdate()
+        {
+            var res = JObject.Parse(CommandDispatcher.Execute("CheckUpdate", "{}"));
+            var data = res["data"] as JObject;
+            if (res["code"]?.Value<int>() != 200)
+            {
+                MessageBox.Show("检查更新失败：" + res["error"], "提示",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (data?["hasUpdate"]?.Value<bool>() == true)
+            {
+                var ok = MessageBox.Show("发现新版本 " + data["remote"] + "（当前 " + data["current"] + "）。是否立即更新？",
+                    "自动更新", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                if (ok == DialogResult.Yes)
+                {
+                    var applyRes = JObject.Parse(CommandDispatcher.Execute("ApplyUpdate", "{}"));
+                    if (applyRes["code"]?.Value<int>() == 200)
+                    {
+                        var exePath = applyRes["data"]?["exePath"]?.ToString();
+                        if (!string.IsNullOrWhiteSpace(exePath))
+                        {
+                            try { Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true }); } catch { }
+                        }
+                        Application.Exit();
+                    }
+                    else
+                    {
+                        MessageBox.Show("更新失败：" + applyRes["error"], "提示",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+            }
+            else
+            {
+                MessageBox.Show("已是最新版本 " + data?["current"], "自动更新",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
 

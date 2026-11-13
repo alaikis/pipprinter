@@ -15,6 +15,8 @@
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
     <Product>PipPrinter</Product>
     <Description>PipPrinter / 小莱打印助手 — 托盘常驻的本地打印助手</Description>
     <Company>alaikis</Company>
@@ -36,6 +38,8 @@
     <PackageReference Include="log4net" Version="2.0.17" />
     <!-- Newtonsoft.Json 最新稳定版；14.x 仍为 beta -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!-- 本机指纹：Win32_Volume 取卷序列号（WMI） -->
+    <PackageReference Include="System.Management" Version="10.0.0" />
     <!--
       移除 Microsoft.Extensions.Logging.Log4Net.AspNetCore：
       1) 项目从未使用 AddLog4Net()，属死依赖；

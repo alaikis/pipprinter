@@ -100,6 +100,15 @@ namespace DuoAssistant.Services
             app.MapGet("/api/printers", () => Json(CommandDispatcher.Execute("GetPrinterList", "{}")));
             app.MapGet("/api/queue", () => Json(CommandDispatcher.Execute("GetQueue", "{}")));
             app.MapGet("/api/disk", () => Json(CommandDispatcher.Execute("GetDiskInfo", "{}")));
+            app.MapGet("/api/machine", () => Json(CommandDispatcher.Execute("GetMachineFingerprint", "{}")));
+            app.MapGet("/api/update/check", () => Json(CommandDispatcher.Execute("CheckUpdate", "{}")));
+            app.MapPost("/api/update/apply", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("ApplyUpdate", body));
+            });
             app.MapGet("/api/docs", () => Results.Json(new
             {
                 code = 200,

@@ -22,6 +22,10 @@ namespace DuoAssistant.Services
         public bool UseRecycleBin { get; set; } = true;
         public List<string> AllowedCommands { get; set; } = new List<string>();
         public List<string> CleanWhitelist { get; set; } = new List<string>();
+        // 本机指纹（MachineFingerprint.Get() 生成），跨浏览器/会话稳定，作为打印习惯的 machine-key
+        public string MachineId { get; set; } = "";
+        // Gitee 自动更新清单 URL（latest.json 所在 release 的 attach_files 直链）
+        public string UpdateManifestUrl { get; set; } = "https://gitee.com/alaikiscom/pipprinter/releases/latest";
     }
 
     /// <summary>
@@ -105,7 +109,8 @@ namespace DuoAssistant.Services
                     "PrintPdf", "PrintFile", "TemplatePrint", "QueuePrint", "GetQueue",
                     "RetryJob", "CancelJob", "ClearQueue", "GetPrinterList", "GetPrinterDetail",
                     "SetDefaultPrinter", "PrintTestPage", "GetPdfDriverConfig", "SetPdfPrintDriverConfig",
-                    "ScanDisk", "CleanDisk", "GetDiskInfo", "GetSettings", "SaveSettings", "GetStatus"
+                    "ScanDisk", "CleanDisk", "GetDiskInfo", "GetSettings", "SaveSettings", "GetStatus",
+                    "GetMachineFingerprint", "CheckUpdate", "ApplyUpdate"
                 },
                 CleanWhitelist = new List<string>
                 {

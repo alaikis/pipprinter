@@ -1,0 +1,67 @@
+version: '1.0'
+name: pipprinter-release
+displayName: PipPrinter 发布流水线
+triggers:
+  trigger: auto
+  push:
+    tags:
+      prefix:
+        - v
+stages:
+  - name: build
+    displayName: 构建 .NET 10 单文件 Release 包
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: build@dotnet
+        name: build_dotnet
+        displayName: .NET 10 编译
+        dotnetVersion: '10.0'
+        commands:
+          - '# 提取版本号（去 v 前缀），回退 2.0.0'
+          - VERSION=$(git describe --tags --exact-match 2>/dev/null | sed 's/^v//'); [ -z "$VERSION" ] && VERSION="2.0.0"
+          - echo "Building PipPrinter v${VERSION} for win-x64 (self-contained single file)"
+          - dotnet restore
+          - dotnet build -c Release -p:Version=${VERSION} -p:AssemblyVersion=${VERSION}.0 -p:FileVersion=${VERSION}.0 -p:EnableWindowsTargeting=true
+          - dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version=${VERSION} -p:AssemblyVersion=${VERSION}.0 -p:EnableWindowsTargeting=true -o ./release/publish
+          - mkdir -p ./out
+          - cd ./release/publish && zip -r ../../out/PipPrinter-win-x64-v${VERSION}.zip . && cd ../../
+          - '# 生成 latest.json 清单（自动更新用）'
+          - SHA=$(shasum -a 256 ./out/PipPrinter-win-x64-v${VERSION}.zip | awk '{print $1}')
+          - SIZE=$(wc -c < ./out/PipPrinter-win-x64-v${VERSION}.zip)
+          - >-
+            printf '{"version":"%s","url":"https://gitee.com/alaikiscom/pipprinter/releases/latest/download/PipPrinter-win-x64-v%s.zip","sha256":"%s","size":%s,"notes":"PipPrinter %s (win-x64)","publishedAt":"%s"}' \
+            "${VERSION}" "${VERSION}" "${SHA}" "${SIZE}" "${VERSION}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ./out/latest.json
+          - cat ./out/latest.json
+        artifacts:
+          - name: PIPPRINTER_RELEASE
+            path:
+              - ./out/
+        caches:
+          - ~/.nuget/packages
+        notify: []
+        strategy:
+          retry: '0'
+  - name: release
+    displayName: 发布 Gitee Release
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: release@gitee
+        name: release_gitee
+        displayName: Gitee Release
+        releaseName: ${GITEE_BRANCH}
+        description: PipPrinter ${GITEE_BRANCH} (win-x64)
+        tagName: ${GITEE_BRANCH}
+        upstreamArtifact:
+          - PIPPRINTER_RELEASE
+        assertFiles:
+          - PipPrinter-win-x64-v${VERSION}.zip
+          - latest.json
+        prerelease: false
+        allowUpdate: true
+        notify: []
+        strategy:
+          retry: '0'

@@ -47,10 +47,28 @@ dotnet build -c Release          # 期望 0 warning / 0 error
 dotnet run                       # 启动后驻留系统托盘，主窗口保持隐藏
 dotnet run -- --show             # 首次运行/验收时直接显示主窗口（默认「打印队列」页）
 
-# 发布单文件（可选）
-dotnet publish -c Release -r win-x64 --self-contained false \
-  -p:PublishSingleFile=true -o ./publish</code></pre>
+# 发布单文件（可选，本地正式包）
+dotnet publish -c Release -r win-x64 --self-contained true \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+  -p:Version=2.0.0 -p:AssemblyVersion=2.0.0.0 -p:EnableWindowsTargeting=true \
+  -o ./release/publish</code></pre>
   <div class="note">启动后请访问 <code>http://127.0.0.1:19861/api/status</code> 确认 Web 服务就绪；若端口被占用，改 <code>config/appsettings.json</code> 的 <code>webPort</code> 后重启。</div>
+
+  <h2>Gitee 发布流水线（.workflow/pipeline.yml）</h2>
+  <p class="lead">Gitee Go 在 <code>master</code> 推送 <code>v*</code> tag 时自动触发，构建 win-x64 自包含单文件包并创建 Gitee Release，同时上传 <code>latest.json</code> 供客户端自动更新。</p>
+  <ol class="steps">
+    <li>本地：实现完毕 → <code>git commit -m "feat: ..."</code> → <code>git tag -a vX.Y.Z -m "PipPrinter vX.Y.Z"</code> → <code>git push gitee master && git push gitee vX.Y.Z</code></li>
+    <li>Gitee Go 监听 <code>push.tags.prefix=v</code>，触发 <code>.workflow/pipeline.yml</code></li>
+    <li>Stage 1 <code>build@dotnet</code>：dotnet 10.0，<code>dotnet publish -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableWindowsTargeting=true</code>，<code>zip</code> 成 <code>PipPrinter-win-x64-v${VERSION}.zip</code>，并生成 <code>latest.json</code>（含 sha256 + size + url）</li>
+    <li>Stage 2 <code>release@gitee</code>：创建 Gitee Release <code>vX.Y.Z</code>，上传 zip + latest.json</li>
+    <li>客户端：拉取 <code>https://gitee.com/alaikiscom/pipprinter/releases/latest/download/latest.json</code>，对比 <code>version</code> 与本地，<code>sha256</code> 校验通过后下载并替换当前目录</li>
+  </ol>
+  <div class="warn"><strong>首次发布：</strong> 仓库需在 Gitee 控制台开通 <strong>Gitee Go 流水线</strong>，并在仓库「环境变量」配置 GITEE_API_TOKEN（或允许 release@gitee 步骤使用内置发布令牌）。流水线保存后会往 <code>.workflow/</code> 目录提交 yaml。</div>
+
+  <h2>本机指纹（跨浏览器 / 会话稳定）</h2>
+  <p>命令 <code>GetMachineFingerprint</code>（WS / <code>POST /api/command</code>）与 REST <code>GET /api/machine</code> 返回 24 位前缀指纹，由 <code>HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid</code> + C 盘卷序列号 + OS 版本 + 当前用户名做 SHA1 生成，并写入 <code>config/appsettings.json</code> 的 <code>machineId</code> 字段。用途：识别「这台机器」并作为打印习惯 / 打印机偏好的 machine-key；跨浏览器、跨账号会话下指纹不变。</p>
+  <pre><code>curl http://127.0.0.1:19861/api/machine
+# { "code":200, "data":{ "machineId":"PP-a1b2c3...", "machineGuid":"...", "volumeSerial":"...", "os":"...", "user":"..." } }</code></pre>
 
   <h2>目录结构</h2>
   <div class="tree">com.alaikis.tools.printer/

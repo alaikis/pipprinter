@@ -345,6 +345,42 @@ namespace DuoAssistant.Services
             }, cmd: "GetStatus");
         }
 
+        /// <summary>本机指纹：跨浏览器/会话稳定，作为打印习惯的 machine-key。</summary>
+        public string GetMachineFingerprint(string args)
+        {
+            var fp = Utils.MachineFingerprint.Get();
+            return Result.success(data: new
+            {
+                machineId = fp,
+                machineGuid = Utils.MachineFingerprint.MachineGuid(),
+                volumeSerial = Utils.MachineFingerprint.VolumeSerial(),
+                os = Environment.OSVersion.VersionString,
+                user = Environment.UserName,
+                app = Brand.NameEn,
+                appCn = Brand.NameCn,
+                version = Utils.Brand.Version
+            }, cmd: "GetMachineFingerprint");
+        }
+
+        // ------------------------------------------------------------ 更新
+
+        /// <summary>拉取 Gitee latest.json，比对当前版本，不实际下载。</summary>
+        public string CheckUpdate(string args)
+        {
+            var info = new UpdateService().CheckUpdateAsync().GetAwaiter().GetResult();
+            return Result.success(data: info, cmd: "CheckUpdate",
+                msg: info.HasUpdate ? "发现新版本 " + info.Remote : "已是最新版本");
+        }
+
+        /// <summary>下载、校验 SHA256、替换当前目录。返回 Installed 标识与备份路径。</summary>
+        public string ApplyUpdate(string args)
+        {
+            var info = new UpdateService().ApplyUpdateAsync().GetAwaiter().GetResult();
+            return info.Installed
+                ? Result.success(data: info, cmd: "ApplyUpdate", msg: "已更新；请重启应用")
+                : Result.error(info.Error ?? "更新失败", 500, "ApplyUpdate", data: info);
+        }
+
         // ------------------------------------------------------------ 辅助
 
         private static JObject ParseObject(string args)
