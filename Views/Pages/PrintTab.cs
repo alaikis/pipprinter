@@ -3,6 +3,7 @@ using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 using DuoAssistant.Services;
+using DuoAssistant.Utils;
 using Newtonsoft.Json.Linq;
 
 namespace DuoAssistant.Views.Pages
@@ -38,10 +39,10 @@ namespace DuoAssistant.Views.Pages
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             var row1 = Ui.Toolbar(
-                Ui.Label("文件 / URL："), _path,
-                Ui.Button("浏览…", (s, e) => Browse(), 80),
-                Ui.Label("打印机："), _printers,
-                Ui.Button("刷新", (s, e) => RefreshPrinters(), 70));
+                Ui.Label(L10n.T("文件 / URL：")), _path,
+                Ui.Button(L10n.T("浏览…"), (s, e) => Browse(), 80),
+                Ui.Label(L10n.T("打印机：")), _printers,
+                Ui.Button(L10n.T("刷新"), (s, e) => RefreshPrinters(), 70));
             root.Controls.Add(row1, 0, 0);
 
             _fit.Items.AddRange(new object[] { "fit", "shrink", "noscale", "compat" });
@@ -50,22 +51,22 @@ namespace DuoAssistant.Views.Pages
             _scale.SelectedIndex = 0;
             _pages.Text = "1-";
             var row2 = Ui.Toolbar(
-                Ui.Label("份数："), _copies,
-                Ui.Label("缩放："), _fit,
-                Ui.Label("方向："), _scale,
-                Ui.Label("纸张："), _paper,
-                Ui.Label("页码："), _pages);
+                Ui.Label(L10n.T("份数：")), _copies,
+                Ui.Label(L10n.T("缩放：")), _fit,
+                Ui.Label(L10n.T("方向：")), _scale,
+                Ui.Label(L10n.T("纸张：")), _paper,
+                Ui.Label(L10n.T("页码：")), _pages);
             root.Controls.Add(row2, 0, 1);
 
             var row3 = Ui.Toolbar(
-                Ui.Button("立即打印", (s, e) => Run("PrintFile"), 120),
-                Ui.Button("加入队列", (s, e) => Run("QueuePrint"), 120),
-                Ui.Button("打印测试页", (s, e) => TestPage(), 120),
-                Ui.Button("清空输出", (s, e) => _output.Clear(), 90));
+                Ui.Button(L10n.T("立即打印"), (s, e) => Run("PrintFile"), 120),
+                Ui.Button(L10n.T("加入队列"), (s, e) => Run("QueuePrint"), 120),
+                Ui.Button(L10n.T("打印测试页"), (s, e) => TestPage(), 120),
+                Ui.Button(L10n.T("清空输出"), (s, e) => _output.Clear(), 90));
             root.Controls.Add(row3, 0, 2);
 
-            _hint.Text = "支持类型：" + string.Join(" / ", PrintFileTypes.All) +
-                         "  ·  PDF 走 SumatraPDF，Office/图片/文本走系统关联程序，HTML 走无头浏览器转 PDF";
+            _hint.Text = L10n.T("支持类型：") + string.Join(" / ", PrintFileTypes.All) +
+                         L10n.T("  ·  PDF 走 SumatraPDF，Office/图片/文本走系统关联程序，HTML 走无头浏览器转 PDF");
             _hint.ForeColor = Color.DimGray;
             _hint.AutoSize = true;
             root.Controls.Add(_hint, 0, 3);
@@ -113,7 +114,7 @@ namespace DuoAssistant.Views.Pages
         {
             if (string.IsNullOrWhiteSpace(_path.Text))
             {
-                MessageBox.Show("请先选择文件或填写 URL。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(L10n.T("请先选择文件或填写 URL。"), L10n.T("提示"), MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             var payload = new JObject

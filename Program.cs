@@ -19,11 +19,14 @@ namespace DuoAssistant
         [STAThread]
         static void Main()
         {
+            // 多语言：在任何 UI/消息框之前解析语言（auto 时检测系统 UI 语言，未匹配回退英文）
+            Utils.L10n.Init();
+
             // 单实例：避免 WS/Web 端口被第二个进程抢占
             _singleInstance = new Mutex(true, @"Global\PipPrinter_2_0", out bool created);
             if (!created)
             {
-                MessageBox.Show(Utils.Brand.Title + " 已在系统托盘中运行。", "提示",
+                MessageBox.Show(Utils.Brand.Title + Utils.L10n.T("已在系统托盘中运行。"), Utils.L10n.T("提示"),
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }

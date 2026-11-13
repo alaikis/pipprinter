@@ -73,12 +73,12 @@ namespace DuoAssistant
         private void BuildTabs()
         {
             _tabs = new TabControl { Dock = DockStyle.Fill, Font = Font, Padding = new Point(12, 6) };
-            AddTab("打印", new PrintTab());
-            AddTab("打印队列", new QueueTab());
-            AddTab("打印机", new PrintersTab());
-            AddTab("磁盘清理", new DiskTab());
-            AddTab("设置", new SettingsTab());
-            AddTab("日志", new LogsTab());
+            AddTab(L10n.T("打印"), new PrintTab());
+            AddTab(L10n.T("打印队列"), new QueueTab());
+            AddTab(L10n.T("打印机"), new PrintersTab());
+            AddTab(L10n.T("磁盘清理"), new DiskTab());
+            AddTab(L10n.T("设置"), new SettingsTab());
+            AddTab(L10n.T("日志"), new LogsTab());
             // 默认展示「打印队列」页
             _tabs.SelectedIndex = 1;
             Controls.Add(_tabs);
@@ -94,7 +94,7 @@ namespace DuoAssistant
 
         private void BuildStatusStrip()
         {
-            _status = new ToolStripStatusLabel { Text = "就绪", Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+            _status = new ToolStripStatusLabel { Text = L10n.T("就绪"), Spring = true, TextAlign = ContentAlignment.MiddleLeft };
             var strip = new StatusStrip { SizingGrip = false, Font = Font };
             strip.Items.Add(_status);
             Controls.Add(strip);
@@ -105,19 +105,19 @@ namespace DuoAssistant
             _menu = new ContextMenuStrip { Font = Font, RenderMode = ToolStripRenderMode.System };
             components.Add(_menu);
 
-            AddMenuItem("打开主窗口", (s, e) => ShowMain(-1), true);
-            AddMenuItem("快速打印…", (s, e) => QuickPrint());
+            AddMenuItem(L10n.T("打开主窗口"), (s, e) => ShowMain(-1), true);
+            AddMenuItem(L10n.T("快速打印…"), (s, e) => QuickPrint());
             _menu.Items.Add(new ToolStripSeparator());
-            AddMenuItem("打印队列", (s, e) => ShowMain(1));
-            AddMenuItem("打印机列表", (s, e) => ShowMain(2));
-            AddMenuItem("磁盘清理", (s, e) => ShowMain(3));
+            AddMenuItem(L10n.T("打印队列"), (s, e) => ShowMain(1));
+            AddMenuItem(L10n.T("打印机列表"), (s, e) => ShowMain(2));
+            AddMenuItem(L10n.T("磁盘清理"), (s, e) => ShowMain(3));
             _menu.Items.Add(new ToolStripSeparator());
-            AddMenuItem("打开文档站点", (s, e) => OpenDocs());
-            AddMenuItem("查看本机指纹", (s, e) => ShowMachineFingerprint());
-            AddMenuItem("检查更新", (s, e) => CheckForUpdate());
-            AddMenuItem("设置", (s, e) => ShowMain(4));
+            AddMenuItem(L10n.T("打开文档站点"), (s, e) => OpenDocs());
+            AddMenuItem(L10n.T("查看本机指纹"), (s, e) => ShowMachineFingerprint());
+            AddMenuItem(L10n.T("检查更新"), (s, e) => CheckForUpdate());
+            AddMenuItem(L10n.T("设置"), (s, e) => ShowMain(4));
             _menu.Items.Add(new ToolStripSeparator());
-            AddMenuItem("退出", (s, e) => ExitApp());
+            AddMenuItem(L10n.T("退出"), (s, e) => ExitApp());
 
             _tray = new NotifyIcon(components)
             {
@@ -129,7 +129,7 @@ namespace DuoAssistant
             // 双击托盘图标始终显示主窗口（不切换隐藏），最小化/关闭窗口才收回托盘
             _tray.MouseDoubleClick += (s, e) => ShowMain(-1);
             _tray.BalloonTipTitle = Brand.Title;
-            _tray.BalloonTipText = "已启动，右键托盘图标可管理打印任务与文档服务。";
+            _tray.BalloonTipText = L10n.T("已启动，右键托盘图标可管理打印任务与文档服务。");
             _tray.ShowBalloonTip(2500);
         }
 
@@ -183,9 +183,9 @@ namespace DuoAssistant
                 var payload = new JObject { ["path"] = dlg.FileName }.ToString();
                 var res = JObject.Parse(CommandDispatcher.Execute("QueuePrint", payload));
                 var ok = res["code"]?.Value<int>() == 200;
-                _tray.ShowBalloonTip(2500, "快速打印",
-                    ok ? "已加入打印队列：" + Path.GetFileName(dlg.FileName)
-                       : "失败：" + res["error"], ok ? ToolTipIcon.Info : ToolTipIcon.Error);
+                _tray.ShowBalloonTip(2500, L10n.T("快速打印"),
+                    ok ? L10n.T("已加入打印队列：") + Path.GetFileName(dlg.FileName)
+                       : L10n.T("失败：") + res["error"], ok ? ToolTipIcon.Info : ToolTipIcon.Error);
             }
         }
 
@@ -197,7 +197,7 @@ namespace DuoAssistant
             }
             catch (Exception ex)
             {
-                MessageBox.Show("无法打开文档站点：" + ex.Message, "提示",
+                MessageBox.Show(L10n.T("无法打开文档站点：") + ex.Message, L10n.T("提示"),
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
@@ -208,19 +208,19 @@ namespace DuoAssistant
             {
                 var res = JObject.Parse(CommandDispatcher.Execute("GetMachineFingerprint", "{}"));
                 var data = res["data"] as JObject;
-                var msg = "本机指纹（跨浏览器/会话稳定）\n" +
+                var msg = L10n.T("本机指纹（跨浏览器/会话稳定）") + "\n" +
                           "machineId: " + data?["machineId"] + "\n" +
                           "machineGuid: " + data?["machineGuid"] + "\n" +
                           "volumeSerial: " + data?["volumeSerial"] + "\n" +
                           "OS: " + data?["os"] + "\n" +
                           "user: " + data?["user"] + "\n" +
                           "app: " + data?["app"] + " v" + data?["version"];
-                MessageBox.Show(msg, Brand.NameCn + " · 本机指纹",
+                MessageBox.Show(msg, Brand.NameCn + " · " + L10n.T("本机指纹"),
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show("获取本机指纹失败：" + ex.Message, "提示",
+                MessageBox.Show(L10n.T("获取本机指纹失败：") + ex.Message, L10n.T("提示"),
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
@@ -231,14 +231,15 @@ namespace DuoAssistant
             var data = res["data"] as JObject;
             if (res["code"]?.Value<int>() != 200)
             {
-                MessageBox.Show("检查更新失败：" + res["error"], "提示",
+                MessageBox.Show(L10n.T("检查更新失败：") + res["error"], L10n.T("提示"),
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             if (data?["hasUpdate"]?.Value<bool>() == true)
             {
-                var ok = MessageBox.Show("发现新版本 " + data["remote"] + "（当前 " + data["current"] + "）。是否立即更新？",
-                    "自动更新", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                var ok = MessageBox.Show(
+                    L10n.F("发现新版本 {0}（当前 {1}）。是否立即更新？", data["remote"], data["current"]),
+                    L10n.T("自动更新"), MessageBoxButtons.YesNo, MessageBoxIcon.Information);
                 if (ok == DialogResult.Yes)
                 {
                     var applyRes = JObject.Parse(CommandDispatcher.Execute("ApplyUpdate", "{}"));
@@ -253,14 +254,14 @@ namespace DuoAssistant
                     }
                     else
                     {
-                        MessageBox.Show("更新失败：" + applyRes["error"], "提示",
+                        MessageBox.Show(L10n.T("更新失败：") + applyRes["error"], L10n.T("提示"),
                             MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
             }
             else
             {
-                MessageBox.Show("已是最新版本 " + data?["current"], "自动更新",
+                MessageBox.Show(L10n.T("已是最新版本 ") + data?["current"], L10n.T("自动更新"),
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
@@ -290,12 +291,12 @@ namespace DuoAssistant
             if (_status == null) return;
             var s = SettingsStore.Instance.Current;
             var q = JObject.FromObject(PrintQueueService.Instance.Summary());
-            _status.Text = string.Format(
+            _status.Text = L10n.F(
                 "WS {0}:{1} {2}   |   Web 文档 {3}   |   队列 等待 {4} / 打印中 {5} / 完成 {6} / 失败 {7}",
                 s.WsHost, s.WsPort, Program.WsRunning ? "●" : "○",
-                Program.WebRunning ? Program.DocsUrl : "未运行",
+                Program.WebRunning ? Program.DocsUrl : L10n.T("未运行"),
                 q["pending"], q["printing"], q["done"], q["failed"]);
-            Text = Brand.Title + (q["pending"]?.Value<int>() > 0 ? "  [队列待处理]" : "");
+            Text = Brand.Title + (q["pending"]?.Value<int>() > 0 ? L10n.T("  [队列待处理]") : "");
         }
     }
 }

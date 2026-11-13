@@ -15,9 +15,9 @@
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <!-- 版本规范 vMAJOR.FEATURE.PATCH：补丁版递增 PATCH(001→002)，大变更递增 FEATURE(1.01.000)，重大重构递增 MAJOR -->
-    <Version>1.00.002</Version>
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
-    <FileVersion>1.0.2.0</FileVersion>
+    <Version>1.01.000</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
     <Product>PipPrinter</Product>
     <Description>PipPrinter / 小莱打印助手 — 托盘常驻的本地打印助手</Description>
     <Company>Alaikis Limited</Company>

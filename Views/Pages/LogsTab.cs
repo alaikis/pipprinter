@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using DuoAssistant.Services;
+using DuoAssistant.Utils;
 
 namespace DuoAssistant.Views.Pages
 {
@@ -14,7 +15,7 @@ namespace DuoAssistant.Views.Pages
         private readonly TextBox _viewer = Ui.Input(0, true);
         private readonly CheckBox _auto = new CheckBox
         {
-            Text = "自动刷新", Checked = true, AutoSize = true, Font = Ui.LabelFont,
+            Text = "", Checked = true, AutoSize = true, Font = Ui.LabelFont,
             Padding = new Padding(0, 8, 8, 0)
         };
         private readonly Timer _timer = new Timer { Interval = 3000 };
@@ -24,6 +25,7 @@ namespace DuoAssistant.Views.Pages
         {
             Dock = DockStyle.Fill;
             BackColor = SystemColors.Window;
+            _auto.Text = L10n.T("自动刷新");
             _category.Items.AddRange(new object[] { "debug", "info", "warn", "err", "fatal" });
             _category.SelectedIndex = 0;
             _category.SelectedIndexChanged += (s, e) => RefreshData();
@@ -34,9 +36,9 @@ namespace DuoAssistant.Views.Pages
             _viewer.Font = new System.Drawing.Font("Consolas", 9F);
 
             var bar = Ui.Toolbar(
-                Ui.Label("日志级别："), _category,
-                Ui.Button("刷新", (s, e) => RefreshData(), 80),
-                Ui.Button("打开日志目录", (s, e) => OpenDir(), 130),
+                Ui.Label(L10n.T("日志级别：")), _category,
+                Ui.Button(L10n.T("刷新"), (s, e) => RefreshData(), 80),
+                Ui.Button(L10n.T("打开日志目录"), (s, e) => OpenDir(), 130),
                 _auto, _status);
 
             var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
@@ -54,12 +56,12 @@ namespace DuoAssistant.Views.Pages
             try
             {
                 var dir = SettingsStore.Instance.LogDir;
-                if (!Directory.Exists(dir)) { _status.Text = "日志目录尚未生成"; return; }
+                if (!Directory.Exists(dir)) { _status.Text = L10n.T("日志目录尚未生成"); return; }
                 var category = _category.SelectedItem?.ToString() ?? "debug";
                 var file = Directory.GetFiles(dir, "*.log", SearchOption.AllDirectories)
                     .Where(f => f.IndexOf(category, StringComparison.OrdinalIgnoreCase) >= 0)
                     .OrderByDescending(File.GetLastWriteTime).FirstOrDefault();
-                if (file == null) { _viewer.Text = "暂无 " + category + " 级别日志。"; _status.Text = ""; return; }
+                if (file == null) { _viewer.Text = L10n.F("暂无 {0} 级别日志。", category); _status.Text = ""; return; }
 
                 string text;
                 using (var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
@@ -72,7 +74,7 @@ namespace DuoAssistant.Views.Pages
                 _viewer.ScrollToCaret();
                 _status.Text = Path.GetFileName(file) + " · " + new FileInfo(file).Length + " bytes";
             }
-            catch (Exception ex) { _status.Text = "读取失败: " + ex.Message; }
+            catch (Exception ex) { _status.Text = L10n.T("读取失败: ") + ex.Message; }
         }
 
         private void OpenDir()

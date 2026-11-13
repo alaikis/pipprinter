@@ -26,6 +26,8 @@ namespace DuoAssistant.Services
         public string MachineId { get; set; } = "";
         // Gitee 自动更新清单 URL（latest.json 所在 release 的 attach_files 直链）
         public string UpdateManifestUrl { get; set; } = "https://gitee.com/alaikiscom/pipprinter/releases/latest";
+        // 界面语言：auto（跟随系统）/ zh-CN / en；未匹配的系统语言回退英文
+        public string Language { get; set; } = "auto";
     }
 
     /// <summary>
@@ -89,6 +91,7 @@ namespace DuoAssistant.Services
                         if (loaded.AllowedCommands == null || loaded.AllowedCommands.Count == 0)
                             loaded.AllowedCommands = Defaults().AllowedCommands;
                         if (loaded.CleanWhitelist == null) loaded.CleanWhitelist = Defaults().CleanWhitelist;
+                        if (string.IsNullOrWhiteSpace(loaded.Language)) loaded.Language = "auto";
                         return loaded;
                     }
                 }
