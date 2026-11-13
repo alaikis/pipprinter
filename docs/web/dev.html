@@ -50,8 +50,11 @@ dotnet run -- --show             # 首次运行/验收时直接显示主窗口�
 # 发布单文件（可选，本地正式包）
 dotnet publish -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
-  -p:Version=1.00.001 -p:AssemblyVersion=1.0.1.0 -p:EnableWindowsTargeting=true \
-  -o ./release/publish</code></pre>
+  -p:Version=1.00.002 -p:AssemblyVersion=1.0.2.0 -p:EnableWindowsTargeting=true \
+  -o ./release/publish
+
+# 生成安装向导（NSIS，需本地安装 NSIS 或在 Linux 上 apt install nsis）
+makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrinter.nsi</code></pre>
   <div class="note">启动后请访问 <code>http://127.0.0.1:19861/api/status</code> 确认 Web 服务就绪；若端口被占用，改 <code>config/appsettings.json</code> 的 <code>webPort</code> 后重启。</div>
 
   <h2>Gitee 发布流水线（.workflow/pipeline.yml）</h2>
@@ -59,9 +62,9 @@ dotnet publish -c Release -r win-x64 --self-contained true \
   <ol class="steps">
     <li>本地：实现完毕 → <code>git commit -m "feat: ..."</code> → <code>git tag -a vX.Y.Z -m "PipPrinter vX.Y.Z"</code> → <code>git push gitee master && git push gitee vX.Y.Z</code></li>
     <li>Gitee Go 监听 <code>push.tags.prefix=v</code>，触发 <code>.workflow/pipeline.yml</code></li>
-    <li>Stage 1 <code>build@dotnet</code>：dotnet 10.0，<code>dotnet publish -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableWindowsTargeting=true</code>，<code>zip</code> 成 <code>PipPrinter-win-x64-v${VERSION}.zip</code>，并生成 <code>latest.json</code>（含 sha256 + size + url）</li>
+    <li>Stage 1 <code>build@dotnet</code>：dotnet 10.0，<code>dotnet publish -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableWindowsTargeting=true</code>；产出两个制品：<strong>绿色版</strong> <code>PipPrinter-win-x64-v${VERSION}.zip</code> 与 <strong>安装版</strong> <code>PipPrinter-Setup-v${VERSION}.exe</code>（NSIS 双语向导，每用户安装免管理员），并生成 <code>latest.json</code>（含 sha256 + size + url + setupUrl）</li>
     <li>Stage 2 <code>release@gitee</code>：创建 Gitee Release <code>vX.Y.Z</code>，上传 zip + latest.json</li>
-    <li>客户端：拉取 <code>https://gitee.com/alaikiscom/pipprinter/releases/latest/download/latest.json</code>，对比 <code>version</code> 与本地，<code>sha256</code> 校验通过后下载并替换当前目录</li>
+    <li>客户端：经 Gitee API v5 <code>/repos/alaikiscom/pipprinter/releases/latest</code> 解析最新 Release 的 latest.json 附件直链（Gitee 不支持 GitHub 风格 latest/download 别名），对比 <code>version</code> 与本地，<code>sha256</code> 校验通过后下载替换（旧 exe 改名让位、用户数据不动）</li>
   </ol>
   <div class="warn"><strong>首次发布：</strong> 仓库需在 Gitee 控制台开通 <strong>Gitee Go 流水线</strong>，并在仓库「环境变量」配置 GITEE_API_TOKEN（或允许 release@gitee 步骤使用内置发布令牌）。流水线保存后会往 <code>.workflow/</code> 目录提交 yaml。</div>
 
