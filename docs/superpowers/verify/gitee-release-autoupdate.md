@@ -39,6 +39,7 @@
 3. 推送 tag 后流水线应自动触发；也可手动在 Gitee 网页编辑流水线（代码视图）保存确认识别
 4. 手动发版（不等流水线）：Gitee Release 页创建 v2.0.0，上传 `dist/PipPrinter-win-x64-v2.0.0.zip` 与 `dist/latest.json`
 5. latest.json 的 url 用 `releases/download/v2.0.0/...`；客户端 UpdateManifestUrl 指向 `releases/latest/download/latest.json`（最新 release）
+6. **发布基线（2026-11-15 用户确认）**：安装包/绿色包一律 **self-contained**（流水线 `--self-contained true -p:PublishSingleFile=true`），用户无需预装 .NET 运行时。若某版本发布物为 framework-dependent（如本地手工构建），不得直接发布：须改为自包含，或在 NSIS 加装 .NET 10 Desktop Runtime 依赖并检测提示（`installer/PipPrinter.nsi` 已加基线注释）。历史偏差：v1.01.001/v1.01.002 为本地 framework-dependent 构建，线上最新带安装包的 v1.01.000 为自包含。
 
 ---
 
