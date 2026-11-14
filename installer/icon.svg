@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="256" height="256">
+  <!-- 荔枝办公应用图标源稿 v4：苹果式极简剪影。
+       荔枝切面（红壳环 + 白肉圆），果核位置是一把极简锤子剪影 —— 锤即荔枝核，
+       一个图形同时表达 名称（荔枝）+ 定位（生产力工具）。无纹理、无拼接。
+       生成：installer/gen-icon.mjs（sharp -> 多尺寸 BMP 条目 ICO） -->
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF6A55"/>
+      <stop offset="0.52" stop-color="#E23A30"/>
+      <stop offset="1" stop-color="#B91515"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#57C48A"/>
+      <stop offset="1" stop-color="#178A54"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 叶：先画，根部藏进果壳 -->
+  <path d="M21.9 7.4 C23.6 3.2 27.9 1.6 32.6 2.6 C32 6.8 28.5 9.6 23.7 8.2 Z" fill="url(#leaf)"/>
+
+  <!-- 荔枝壳：单一红圆 -->
+  <circle cx="20" cy="22" r="16" fill="url(#skin)"/>
+
+  <!-- 果肉：白圆（切面） -->
+  <circle cx="20" cy="22" r="12.4" fill="#FFF8F4"/>
+
+  <!-- 果核 = 锤子剪影（两个同色形状，视觉一体） -->
+  <g fill="#3B2318">
+    <rect x="13.6" y="15.2" width="12.8" height="6.2" rx="3.1"/>
+    <rect x="18.7" y="20.6" width="2.6" height="8.4" rx="1.3"/>
+  </g>
+</svg>

@@ -72,6 +72,10 @@ namespace DuoAssistant.Services
     public class ExtendedPrintService
     {
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+
+        /// <summary>供模板打印等复用：把 URL 下载为本地字节（失败抛异常）。</summary>
+        public static byte[] DownloadBytes(string url)
+            => Http.GetByteArrayAsync(url).GetAwaiter().GetResult();
         private readonly NativePrintService _native = new NativePrintService();
 
         /// <summary>
@@ -272,10 +276,36 @@ namespace DuoAssistant.Services
             {
                 var url = NormalizeUrl(job.Target);
                 var uri = new Uri(url);
-                var bytes = Http.GetByteArrayAsync(url).GetAwaiter().GetResult();
-                var name = Path.GetFileName(uri.AbsolutePath);
-                if (string.IsNullOrWhiteSpace(name) || !Path.HasExtension(name))
-                    name = "download" + GuessExtension(bytes);
+                byte[] bytes;
+                string name;
+                string mime;
+                using (var resp = Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult())
+                {
+                    resp.EnsureSuccessStatusCode();
+                    bytes = resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                    mime = resp.Content?.Headers?.ContentType?.MediaType ?? "";
+                    name = NameFromResponse(resp, uri);
+                }
+
+                // 识别顺序：响应文件名后缀 → 文件字节特征 → 响应 Content-Type。
+                // 后缀与内容本身即是依据；三者都拿不到时明确报错，不再落 .bin 交给系统碰运气。
+                var ext = Path.GetExtension(name ?? "").ToLowerInvariant();
+                if (Array.IndexOf(PrintFileTypes.All, ext) < 0) ext = "";
+                if (string.IsNullOrWhiteSpace(ext))
+                {
+                    var magic = GuessExtensionFromBytes(bytes);
+                    if (magic != ".bin") ext = magic;
+                }
+                if (string.IsNullOrWhiteSpace(ext)) ext = ExtensionFromContentType(mime);
+                if (Array.IndexOf(PrintFileTypes.All, ext) < 0) ext = "";
+                if (string.IsNullOrWhiteSpace(ext))
+                    throw new InvalidOperationException(
+                        "无法识别网络文件类型：请提供带可识别扩展名的下载地址，或由服务端返回正确的文件名 / 内容类型；未执行打印");
+                var stem = string.IsNullOrWhiteSpace(name) ? "download" : Path.GetFileNameWithoutExtension(name);
+                name = stem + ext;
+                Tools.Logger(string.Format("网络文件 {0} → {1} (Content-Type {2}, 识别扩展名 {3})",
+                    url, name, mime, ext));
+
                 var path = Path.Combine(SettingsStore.Instance.TempDir,
                     Guid.NewGuid().ToString("N") + "_" + SanitizeFileName(name));
                 File.WriteAllBytes(path, bytes);
@@ -330,12 +360,70 @@ namespace DuoAssistant.Services
             return s;
         }
 
-        private static string GuessExtension(byte[] bytes)
+        /// <summary>从 Content-Disposition 或 URL 路径取文件名（含扩展名）。</summary>
+        private static string NameFromResponse(HttpResponseMessage resp, Uri uri)
+        {
+            var cd = resp.Content?.Headers?.ContentDisposition;
+            var fn = cd?.FileNameStar ?? cd?.FileName;
+            if (!string.IsNullOrWhiteSpace(fn))
+            {
+                fn = Path.GetFileName(fn.Trim().Trim('"').Replace('\\', '/'));
+                if (!string.IsNullOrWhiteSpace(fn) && Path.HasExtension(fn)) return fn;
+            }
+            return Path.GetFileName(uri.AbsolutePath);
+        }
+
+        /// <summary>Content-Type → 本应用支持的扩展名；无法映射时返回空串。</summary>
+        public static string ExtensionFromContentType(string contentType)
+        {
+            var mime = (contentType ?? "").Split(';')[0].Trim().ToLowerInvariant();
+            switch (mime)
+            {
+                case "application/pdf": return ".pdf";
+                case "image/png": return ".png";
+                case "image/jpeg": case "image/jpg": return ".jpg";
+                case "image/gif": return ".gif";
+                case "image/bmp": case "image/x-ms-bmp": return ".bmp";
+                case "image/tiff": return ".tif";
+                case "text/html": case "application/xhtml+xml": return ".html";
+                case "text/plain": case "text/csv": return ".txt";
+                case "image/svg+xml": return ".svg";
+                case "application/msword": return ".doc";
+                case "application/vnd.ms-excel": return ".xls";
+                case "application/vnd.ms-powerpoint": return ".ppt";
+                case "application/vnd.openxmlformats-officedocument.wordprocessingml.document": return ".docx";
+                case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": return ".xlsx";
+                case "application/vnd.openxmlformats-officedocument.presentationml.presentation": return ".pptx";
+                case "application/vnd.oasis.opendocument.text": return ".odt";
+                case "application/rtf": case "text/rtf": return ".rtf";
+                case "application/vnd.ms-xpsdocument": case "application/oxps": return ".xps";
+                case "application/ofd": return ".ofd";
+                default: return "";
+            }
+        }
+
+        private static bool StartsWithAscii(byte[] b, string s)
+        {
+            if (b == null || b.Length < s.Length) return false;
+            for (int i = 0; i < s.Length; i++) if (b[i] != (byte)s[i]) return false;
+            return true;
+        }
+
+        /// <summary>按内容魔数推断扩展名，供无扩展名网络文件与内联内容使用。</summary>
+        public static string GuessExtensionFromBytes(byte[] bytes)
         {
             if (bytes == null || bytes.Length < 4) return ".bin";
-            if (bytes[0] == '%' && bytes[1] == 'P' && bytes[2] == 'D' && bytes[3] == 'F') return ".pdf";
-            if (bytes[0] == 0x89 && bytes[1] == 0x50) return ".png";
-            if (bytes[0] == 0xFF && bytes[1] == 0xD8) return ".jpg";
+            if (StartsWithAscii(bytes, "%PDF")) return ".pdf";
+            if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) return ".png";
+            if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) return ".jpg";
+            if (StartsWithAscii(bytes, "GIF87a") || StartsWithAscii(bytes, "GIF89a")) return ".gif";
+            if (bytes[0] == 'B' && bytes[1] == 'M') return ".bmp";
+            if ((bytes[0] == 0x49 && bytes[1] == 0x49 && bytes[2] == 0x2A && bytes[3] == 0) ||
+                (bytes[0] == 0x4D && bytes[1] == 0x4D && bytes[2] == 0 && bytes[3] == 0x2A)) return ".tif";
+            var head = System.Text.Encoding.UTF8.GetString(bytes, 0, Math.Min(bytes.Length, 512))
+                .TrimStart('\uFEFF', ' ', '\r', '\n', '\t').ToLowerInvariant();
+            if (head.StartsWith("<!doctype html") || head.StartsWith("<html")) return ".html";
+            if (head.StartsWith("<svg") || (head.StartsWith("<?xml") && head.Contains("<svg"))) return ".svg";
             return ".bin";
         }
 
@@ -394,18 +482,48 @@ namespace DuoAssistant.Services
             return PrintWithSumatra(file, job, printer);
         }
 
+        /// <summary>把本应用的 fit 取值归一化为 SumatraPDF 支持的值（compat 是历史别名）。</summary>
+        private static string SumatraFit(string fit)
+        {
+            switch ((fit ?? "fit").Trim().ToLowerInvariant())
+            {
+                case "noscale": case "shrink": case "fit": case "stretch": return (fit ?? "fit").Trim().ToLowerInvariant();
+                default: return "fit";
+            }
+        }
+
+        /// <summary>双面模式映射：simplex / duplexlong / duplexshort。</summary>
+        private static string SumatraDuplex(string duplex)
+        {
+            switch ((duplex ?? "simplex").Trim().ToLowerInvariant())
+            {
+                case "duplex": case "duplexlong": case "long": case "vertical": return "duplexlong";
+                case "duplexshort": case "short": case "horizontal": return "duplexshort";
+                default: return "simplex";
+            }
+        }
+
         private PrintOutcome PrintWithSumatra(string file, PrintJob job, string printer)
         {
             var exe = ResolveSumatra();
-            var settings = string.Join(",", new[]
+            // 下列取值均来自 SumatraPDF 官方 -print-settings 文档，不传未支持的参数。
+            var parts = new List<string>
             {
                 string.IsNullOrWhiteSpace(job.Pages) ? "1-" : job.Pages,
-                string.IsNullOrWhiteSpace(job.Fit) ? "fit" : job.Fit,
-                string.IsNullOrWhiteSpace(job.Scale) ? "portrait" : job.Scale,
+                SumatraFit(job.Fit),
+                string.Equals(job.Scale, "landscape", StringComparison.OrdinalIgnoreCase) ? "landscape" : "portrait",
                 Math.Max(1, job.Copies) + "x"
-            });
+            };
             if (!string.IsNullOrWhiteSpace(job.PaperKind))
-                settings += ",paper=" + NormalizePaper(job.PaperKind);
+                parts.Add("paper=" + NormalizePaper(job.PaperKind));
+            parts.Add(SumatraDuplex(job.Duplex));
+            if (job.Color.HasValue) parts.Add(job.Color.Value ? "color" : "monochrome");
+            parts.Add(job.Collate ? "collate" : "nocollate");
+            if (!string.IsNullOrWhiteSpace(job.Bin)) parts.Add("bin=" + job.Bin);
+            if (job.Dpi > 0) parts.Add("dpi=" + job.Dpi);
+            var parity = (job.PageOrder ?? "").Trim().ToLowerInvariant();
+            if (parity == "even" || parity == "odd") parts.Add(parity);
+            var settings = string.Join(",", parts);
 
             var psi = new ProcessStartInfo
             {
