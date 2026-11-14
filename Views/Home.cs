@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -36,35 +40,40 @@ namespace DuoAssistant
 
         private void BuildUi()
         {
-            Font = new Font("Microsoft YaHei", 9F);
+            Font = Theme.BodyFont;
             Text = Brand.Title;
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(1060, 700);
             MinimumSize = new Size(900, 560);
             AutoScaleMode = AutoScaleMode.Font;
+            BackColor = Theme.Bg;
             // 不动态切换 ShowInTaskbar（切换会重建句柄导致托盘/显示状态异常）；
             // 窗体隐藏时本来就不会出现在任务栏。
             ShowInTaskbar = true;
 
-            var icon = LoadIcon();
+            var icon = LoadIcon("app.ico");
             if (icon != null) Icon = icon;
 
             BuildTabs();
             BuildStatusStrip();
-            BuildTray(icon);
+            BuildTray(LoadIcon("tray.ico"));
+            Theme.Apply(this);
 
             // 启动即驻留托盘，不弹主窗口
             WindowState = FormWindowState.Minimized;
             Hide();
         }
 
-        private static Icon LoadIcon()
+        /// <summary>加载图标：优先 Resource 目录下的 ico，缺失时回退 exe 内嵌图标，再失败用系统图标。</summary>
+        private static Icon LoadIcon(string file)
         {
             try
             {
                 var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
-                    "Resource", "bitbug_favicon.ico");
+                    "Resource", file);
                 if (File.Exists(path)) return new Icon(path);
+                // 回退：exe 内嵌图标（csproj ApplicationIcon = Resource\app.ico）
+                return Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             }
             catch (Exception ex) { Tools.Logger("图标加载失败，使用系统图标: " + ex.Message); }
             return SystemIcons.Application;
@@ -72,7 +81,39 @@ namespace DuoAssistant
 
         private void BuildTabs()
         {
-            _tabs = new TabControl { Dock = DockStyle.Fill, Font = Font, Padding = new Point(12, 6) };
+            _tabs = new TabControl
+            {
+                Dock = DockStyle.Fill, Font = Theme.BodyFont,
+                Padding = new Point(12, 6), BackColor = Theme.Card,
+                DrawMode = TabDrawMode.OwnerDrawFixed
+            };
+            // 胶囊页签：选中浅红底 + 荔枝红粗体，未选中灰字（Wise 风格极简页签）
+            _tabs.DrawItem += (s, e) =>
+            {
+                var tab = _tabs.TabPages[e.Index];
+                var bounds = e.Bounds;
+                bounds.Inflate(-2, -2);
+                bool selected = _tabs.SelectedIndex == e.Index;
+
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                if (selected)
+                {
+                    using (var path = Theme.RoundedRect(bounds, Theme.Radius))
+                    using (var brush = new SolidBrush(Theme.PrimarySoft))
+                        e.Graphics.FillPath(brush, path);
+                }
+                using (var font = new Font("Microsoft YaHei", 9F,
+                    selected ? FontStyle.Bold : FontStyle.Regular))
+                using (var brush = new SolidBrush(selected ? Theme.PrimaryDark : Theme.Muted))
+                {
+                    var sf = new StringFormat
+                    {
+                        LineAlignment = StringAlignment.Center,
+                        Alignment = StringAlignment.Center
+                    };
+                    e.Graphics.DrawString(tab.Text, font, brush, bounds, sf);
+                }
+            };
             AddTab(L10n.T("打印"), new PrintTab());
             AddTab(L10n.T("打印队列"), new QueueTab());
             AddTab(L10n.T("打印机"), new PrintersTab());
@@ -95,14 +136,20 @@ namespace DuoAssistant
         private void BuildStatusStrip()
         {
             _status = new ToolStripStatusLabel { Text = L10n.T("就绪"), Spring = true, TextAlign = ContentAlignment.MiddleLeft };
-            var strip = new StatusStrip { SizingGrip = false, Font = Font };
+            var strip = new StatusStrip { SizingGrip = false, Font = Theme.BodyFont, BackColor = Theme.Card, ForeColor = Theme.Muted };
+            strip.Renderer = new Theme.ToolStripRenderer();
             strip.Items.Add(_status);
             Controls.Add(strip);
         }
 
         private void BuildTray(Icon icon)
         {
-            _menu = new ContextMenuStrip { Font = Font, RenderMode = ToolStripRenderMode.System };
+            _menu = new ContextMenuStrip
+            {
+                Font = Theme.BodyFont, RenderMode = ToolStripRenderMode.Professional,
+                BackColor = Theme.Card, ForeColor = Theme.Text
+            };
+            _menu.Renderer = new Theme.ToolStripRenderer();
             components.Add(_menu);
 
             AddMenuItem(L10n.T("打开主窗口"), (s, e) => ShowMain(-1), true);
@@ -292,8 +339,8 @@ namespace DuoAssistant
             var s = SettingsStore.Instance.Current;
             var q = JObject.FromObject(PrintQueueService.Instance.Summary());
             _status.Text = L10n.F(
-                "WS {0}:{1} {2}   |   Web 文档 {3}   |   队列 等待 {4} / 打印中 {5} / 完成 {6} / 失败 {7}",
-                s.WsHost, s.WsPort, Program.WsRunning ? "●" : "○",
+                "WS {0}:{1}/ws {2}   |   Web 文档 {3}   |   队列 等待 {4} / 打印中 {5} / 完成 {6} / 失败 {7}",
+                s.WebHost, s.WebPort, Program.WsRunning ? "●" : "○",
                 Program.WebRunning ? Program.DocsUrl : L10n.T("未运行"),
                 q["pending"], q["printing"], q["done"], q["failed"]);
             Text = Brand.Title + (q["pending"]?.Value<int>() > 0 ? L10n.T("  [队列待处理]") : "");

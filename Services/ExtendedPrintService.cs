@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -26,6 +30,24 @@ namespace DuoAssistant.Services
         public static readonly string[] Image = { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff" };
         public static readonly string[] Html = { ".html", ".htm", ".mhtml" };
         public static readonly string[] Text = { ".txt", ".csv", ".log", ".md" };
+        public static readonly string[] Svg = { ".svg" };
+        public static readonly string[] Xps = { ".xps" };
+        public static readonly string[] Ofd = { ".ofd" };
+
+        /// <summary>扩展名 → 内容类别，供路由与文档展示。</summary>
+        public static string CategoryOf(string ext)
+        {
+            ext = (ext ?? "").ToLowerInvariant();
+            if (Array.IndexOf(Pdf, ext) >= 0) return "pdf";
+            if (Array.IndexOf(Office, ext) >= 0) return "office";
+            if (Array.IndexOf(Image, ext) >= 0) return "image";
+            if (Array.IndexOf(Html, ext) >= 0) return "html";
+            if (Array.IndexOf(Text, ext) >= 0) return "text";
+            if (Array.IndexOf(Svg, ext) >= 0) return "svg";
+            if (Array.IndexOf(Xps, ext) >= 0) return "xps";
+            if (Array.IndexOf(Ofd, ext) >= 0) return "ofd";
+            return "unknown";
+        }
 
         public static string[] All
         {
@@ -34,6 +56,7 @@ namespace DuoAssistant.Services
                 var list = new List<string>();
                 list.AddRange(Pdf); list.AddRange(Office); list.AddRange(Image);
                 list.AddRange(Html); list.AddRange(Text);
+                list.AddRange(Svg); list.AddRange(Xps); list.AddRange(Ofd);
                 return list.ToArray();
             }
         }
@@ -49,6 +72,7 @@ namespace DuoAssistant.Services
     public class ExtendedPrintService
     {
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        private readonly NativePrintService _native = new NativePrintService();
 
         /// <summary>
         /// 执行打印。URL 会先下载到 temp 目录；文件类型由扩展名或 Content-Type 推断。
@@ -73,12 +97,30 @@ namespace DuoAssistant.Services
                 if (Array.IndexOf(PrintFileTypes.Html, ext) >= 0)
                     return PrintHtml(local, job, printer);
 
-                if (Array.IndexOf(PrintFileTypes.Office, ext) >= 0 ||
-                    Array.IndexOf(PrintFileTypes.Image, ext) >= 0 ||
-                    Array.IndexOf(PrintFileTypes.Text, ext) >= 0)
-                    return PrintWithShellVerb(local, printer);
+                // 图片 / 文本：GDI+ 原生渲染，不依赖 Office / 看图软件 / Shell 关联
+                if (Array.IndexOf(PrintFileTypes.Image, ext) >= 0)
+                    return _native.PrintImage(local, job, printer);
 
-                // 未知类型也交给系统 Shell 兜底
+                if (Array.IndexOf(PrintFileTypes.Text, ext) >= 0)
+                    return _native.PrintText(local, job, printer);
+
+                // SVG：无头浏览器渲染为 PDF 后打印
+                if (Array.IndexOf(PrintFileTypes.Svg, ext) >= 0)
+                    return PrintSvg(local, job, printer);
+
+                // OFD：国产版式文档（电子发票等），转换器转 PDF 后打印，否则交给系统关联程序
+                if (Array.IndexOf(PrintFileTypes.Ofd, ext) >= 0)
+                    return PrintOfd(local, job, printer);
+
+                // Office：LibreOffice headless 转 PDF 后打印；无 LibreOffice 时退回 Shell
+                if (Array.IndexOf(PrintFileTypes.Office, ext) >= 0)
+                    return PrintOffice(local, job, printer);
+
+                // XPS：用 WPF 渲染为位图后走 GDI+ 原生管线（不依赖 XPS Viewer）
+                if (Array.IndexOf(PrintFileTypes.Xps, ext) >= 0)
+                    return PrintXps(local, job, printer);
+
+                // 未知类型：交给系统关联程序兜底
                 return PrintWithShellVerb(local, printer);
             }
             catch (Exception ex)
@@ -86,6 +128,141 @@ namespace DuoAssistant.Services
                 Tools.Logger("打印失败: " + ex);
                 return new PrintOutcome { Ok = false, Message = ex.Message, Detail = ex.ToString() };
             }
+        }
+
+        /// <summary>供虚拟打印等外部调用：把任务解析为本地文件（URL 会下载）。</summary>
+        public string ResolveLocal(PrintJob job) => ResolveLocalFile(job);
+
+        /// <summary>
+        /// 虚拟打印：把任务输出为文件（PDF / XPS），而非发送到实体打印机。
+        /// 图片与文本走 GDI+ 原生渲染；PDF 直接复制（无损）；Office/SVG 先转 PDF 再复制。
+        /// </summary>
+        public PrintOutcome PrintVirtual(PrintJob job, string virtualPrinter, string outPath)
+        {
+            if (job == null) return new PrintOutcome { Ok = false, Message = "任务为空" };
+            try
+            {
+                var local = ResolveLocalFile(job);
+                var ext = Path.GetExtension(local).ToLowerInvariant();
+                var cat = PrintFileTypes.CategoryOf(ext);
+
+                switch (cat)
+                {
+                    case "image":
+                        return _native.PrintImageToVirtual(local, job, virtualPrinter, outPath);
+                    case "text":
+                        return _native.PrintTextToVirtual(local, job, virtualPrinter, outPath);
+                    case "pdf":
+                        return CopyAsOutput(local, outPath);
+                    case "svg":
+                        var svgPng = RenderSvgToPng(local);
+                        if (svgPng == null)
+                            return new PrintOutcome { Ok = false, Message = "SVG 渲染失败，无法输出: " + local };
+                        try { return _native.PrintImageToVirtual(svgPng, job, virtualPrinter, outPath); }
+                        finally { TryDelete(svgPng); }
+                    case "office":
+                        var pdf = ConvertToPdf(local, ext);
+                        if (pdf == null)
+                            return new PrintOutcome { Ok = false, Message = "无法转换为 PDF（需要 LibreOffice）: " + ext };
+                        return CopyAsOutput(pdf, outPath);
+                    default:
+                        return new PrintOutcome { Ok = false, Message = "该类型不支持虚拟打印输出: " + ext };
+                }
+            }
+            catch (Exception ex)
+            {
+                Tools.Logger("虚拟打印失败: " + ex);
+                return new PrintOutcome { Ok = false, Message = ex.Message };
+            }
+        }
+
+        /// <summary>
+        /// 输出 XPS 文件。
+        /// 图片 / 文本：使用内置 XPS 写入器（不依赖可选功能 Microsoft XPS Document Writer）。
+        /// PDF / Office / SVG：内置写入器不覆盖，返回明确提示（避免把 PDF 直接改名成 .xps 造成假文件）。
+        /// </summary>
+        public PrintOutcome PrintVirtualXps(PrintJob job, string outPath)
+        {
+            if (job == null) return new PrintOutcome { Ok = false, Message = "任务为空" };
+            var writer = new XpsWriterService();
+            try
+            {
+                var local = ResolveLocalFile(job);
+                var ext = Path.GetExtension(local).ToLowerInvariant();
+                var cat = PrintFileTypes.CategoryOf(ext);
+
+                if (cat == "image") return writer.WriteImage(local, job, outPath);
+                if (cat == "text") return writer.WriteText(local, job, outPath);
+
+                return new PrintOutcome
+                {
+                    Ok = false,
+                    Message = "XPS 输出目前支持图片与文本。" + ext + " 类型请改用 PrintToPdf 输出 PDF，"
+                        + "或先转换为图片/PDF 后再打印。",
+                    Detail = "内置 XPS 写入器覆盖范围: image, text"
+                };
+            }
+            catch (Exception ex)
+            {
+                Tools.Logger("XPS 输出失败: " + ex);
+                return new PrintOutcome { Ok = false, Message = ex.Message };
+            }
+        }
+
+        private static PrintOutcome CopyAsOutput(string source, string outPath)
+        {
+            try
+            {
+                var full = Path.GetFullPath(outPath);
+                var dir = Path.GetDirectoryName(full);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.Copy(source, full, true);
+                return new PrintOutcome { Ok = true, Engine = "Copy", Message = "已输出到 " + full };
+            }
+            catch (Exception ex)
+            {
+                return new PrintOutcome { Ok = false, Message = "输出失败: " + ex.Message };
+            }
+        }
+
+        /// <summary>把 Office / SVG 转成 PDF（供虚拟打印复用）。失败返回 null。</summary>
+        private string ConvertToPdf(string local, string ext)
+        {
+            if (Array.IndexOf(PrintFileTypes.Office, ext) >= 0)
+            {
+                var soffice = FindSoffice();
+                if (string.IsNullOrEmpty(soffice)) return null;
+
+                var pdf = Path.Combine(SettingsStore.Instance.TempDir,
+                    Path.GetFileNameWithoutExtension(local) + ".pdf");
+                try { if (File.Exists(pdf)) File.Delete(pdf); }
+                catch { /* 忽略 */ }
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = soffice,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    WorkingDirectory = SettingsStore.Instance.TempDir
+                };
+                psi.ArgumentList.Add("--headless");
+                psi.ArgumentList.Add("--convert-to");
+                psi.ArgumentList.Add("pdf");
+                psi.ArgumentList.Add("--outdir");
+                psi.ArgumentList.Add(SettingsStore.Instance.TempDir);
+                psi.ArgumentList.Add(Path.GetFullPath(local));
+
+                using (var p = Process.Start(psi))
+                {
+                    if (p == null || !p.WaitForExit(120000) || p.ExitCode != 0) return null;
+                }
+                return File.Exists(pdf) ? pdf : null;
+            }
+
+            // SVG 不再走这里：改为 Svg 库直接渲染位图（见 RenderSvgToPng），
+            // headless 浏览器方案在浏览器已有后台进程时会静默失效，已弃用。
+            return null;
         }
 
         /// <summary>把 URL 下载为本地文件；本地路径直接返回。</summary>
@@ -190,6 +367,33 @@ namespace DuoAssistant.Services
             throw new FileNotFoundException("未找到 SumatraPDF.exe，请检查 lib/driver 目录或联网以下载驱动");
         }
 
+        /// <summary>
+        /// 纸张参数归一化（对 SumatraPDF -print-settings paper= 的取值）：
+        /// A0/A1 超出 SumatraPDF 标准名列表（A2–A6/letter/legal/tabloid/statement），
+        /// 换算为 ISO 216 自定义尺寸毫米串；auto 与其余值（标准名/驱动名/自定义尺寸）原样透传。
+        /// 大幅面出图实际能否兑现取决于打印机驱动是否支持该幅面（绘图仪）。
+        /// </summary>
+        internal static string NormalizePaper(string paper)
+        {
+            var p = (paper ?? "").Trim();
+            if (p.Length == 0) return p;
+            switch (p.ToUpperInvariant())
+            {
+                case "A0": return "841mm x 1189mm";
+                case "A1": return "594mm x 841mm";
+                default: return p;
+            }
+        }
+
+        /// <summary>
+        /// 直接用 SumatraPDF 打印（PDF/图片），绕过系统 Shell 关联。
+        /// 供条码标签等本应用生成的中间文件使用，打印行为可控且静默。
+        /// </summary>
+        public PrintOutcome PrintDirect(string file, PrintJob job, string printer)
+        {
+            return PrintWithSumatra(file, job, printer);
+        }
+
         private PrintOutcome PrintWithSumatra(string file, PrintJob job, string printer)
         {
             var exe = ResolveSumatra();
@@ -201,7 +405,7 @@ namespace DuoAssistant.Services
                 Math.Max(1, job.Copies) + "x"
             });
             if (!string.IsNullOrWhiteSpace(job.PaperKind))
-                settings += ",paper=" + job.PaperKind;
+                settings += ",paper=" + NormalizePaper(job.PaperKind);
 
             var psi = new ProcessStartInfo
             {
@@ -254,18 +458,34 @@ namespace DuoAssistant.Services
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
             };
-            using (var p = Process.Start(psi))
+            try
             {
-                if (p != null && !p.WaitForExit(120000))
+                using (var p = Process.Start(psi))
                 {
-                    // 部分应用由 Shell 打印后即刻退出；超时不视为失败
-                    Tools.Logger("Shell 打印进程未退出，交由系统后台完成: " + file);
+                    if (p != null && !p.WaitForExit(120000))
+                    {
+                        // 部分应用由 Shell 打印后即刻退出；超时不视为失败
+                        Tools.Logger("Shell 打印进程未退出，交由系统后台完成: " + file);
+                    }
+                    return new PrintOutcome
+                    {
+                        Ok = true, Engine = "ShellVerb",
+                        Message = "已通过系统关联程序提交打印到 " + printer,
+                        Detail = "若未出纸，请确认已安装可打印该类型文件的应用（Office / WPS / 图片查看器）"
+                    };
                 }
+            }
+            catch (Exception ex)
+            {
+                var ext = Path.GetExtension(file).ToLowerInvariant();
+                Tools.Logger("Shell 打印失败(" + ext + "): " + ex.Message);
                 return new PrintOutcome
                 {
-                    Ok = true, Engine = "ShellVerb",
-                    Message = "已通过系统关联程序提交打印到 " + printer,
-                    Detail = "若未出纸，请确认已安装可打印该类型文件的应用（Office / WPS / 图片查看器）"
+                    Ok = false,
+                    Engine = "ShellVerb",
+                    Message = "没有可打印 " + ext + " 的系统关联程序（" + Path.GetFileName(file) + "）。"
+                        + "请安装对应的阅读器/办公软件，或在设置中配置转换器后重试。",
+                    Detail = ex.Message
                 };
             }
         }
@@ -306,6 +526,188 @@ namespace DuoAssistant.Services
             job2.Target = pdf;
             job2.Source = "file";
             return PrintWithSumatra(pdf, job2, printer);
+        }
+
+        /// <summary>
+        /// SVG：用 Svg 库直接渲染为位图，再走 GDI+ 原生打印管线。
+        /// 相比 headless Edge/Chrome 更可靠：不依赖浏览器后台进程、用户配置与会话状态。
+        /// 渲染失败时退回系统关联程序。
+        /// </summary>
+        private PrintOutcome PrintSvg(string file, PrintJob job, string printer)
+        {
+            var png = RenderSvgToPng(file);
+            if (string.IsNullOrEmpty(png))
+            {
+                Tools.Logger("SVG 渲染失败，改用系统关联程序打印");
+                return PrintWithShellVerb(file, printer);
+            }
+            try
+            {
+                var outcome = _native.PrintImage(png, job, printer);
+                outcome.Engine = "SVG+" + outcome.Engine;
+                return outcome;
+            }
+            finally { TryDelete(png); }
+        }
+
+        /// <summary>
+        /// 把 SVG 渲染为临时 PNG（长边约 2400px，约合 300 DPI 下 8 英寸）。
+        /// 失败返回 null。
+        /// </summary>
+        private static string RenderSvgToPng(string file)
+        {
+            try
+            {
+                var svg = Svg.SvgDocument.Open(file);
+                if (svg == null) return null;
+
+                double baseW = svg.Width > 0 ? svg.Width : svg.ViewBox.Width;
+                double baseH = svg.Height > 0 ? svg.Height : svg.ViewBox.Height;
+                if (baseW <= 0 || baseH <= 0) { baseW = 400; baseH = 300; }
+
+                // 长边 2400px，并限制总像素防止超大位图
+                double scale = 2400.0 / Math.Max(baseW, baseH);
+                while (baseW * scale * baseH * scale > 24000000 && scale > 0.1)
+                    scale *= 0.85;
+
+                int w = Math.Max(1, (int)Math.Round(baseW * scale));
+                int h = Math.Max(1, (int)Math.Round(baseH * scale));
+
+                var path = Path.Combine(SettingsStore.Instance.TempDir,
+                    "svg_" + Guid.NewGuid().ToString("N") + ".png");
+                using (var bmp = new System.Drawing.Bitmap(w, h))
+                {
+                    using (var g = System.Drawing.Graphics.FromImage(bmp))
+                    {
+                        g.Clear(System.Drawing.Color.White);
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                        svg.Draw(g);
+                    }
+                    bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                return File.Exists(path) ? path : null;
+            }
+            catch (Exception ex)
+            {
+                Tools.Logger("SVG 渲染异常: " + ex.Message);
+                return null;
+            }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try { if (!string.IsNullOrEmpty(path) && File.Exists(path)) File.Delete(path); }
+            catch { /* 临时文件清理失败不影响主流程 */ }
+        }
+
+        /// <summary>
+        /// XPS 文档：用 WPF 的 XpsDocument 渲染每页为位图，再走 GDI+ 原生打印管线。
+        /// 不依赖系统是否安装 XPS Viewer。渲染失败时退回系统关联程序。
+        /// </summary>
+        private PrintOutcome PrintXps(string file, PrintJob job, string printer)
+        {
+            List<string> pages = null;
+            try { pages = new XpsWriterService().RenderPages(file); }
+            catch (Exception ex) { Tools.Logger("XPS 渲染异常: " + ex.Message); }
+
+            if (pages == null || pages.Count == 0)
+            {
+                Tools.Logger("XPS 渲染失败或文档为空，改用系统关联程序打印");
+                return PrintWithShellVerb(file, printer);
+            }
+
+            try
+            {
+                var outcome = _native.PrintImages(pages, job, printer);
+                outcome.Engine = "XPS+" + outcome.Engine;
+                return outcome;
+            }
+            finally
+            {
+                foreach (var p in pages) TryDelete(p);
+            }
+        }
+
+        /// <summary>
+        /// Office：优先用 LibreOffice headless 转 PDF（本机无需安装 Office/WPS 即可打印），
+        /// 转换失败或未安装时退回系统关联程序。
+        /// </summary>
+        private PrintOutcome PrintOffice(string file, PrintJob job, string printer)
+        {
+            var pdf = ConvertToPdf(file, Path.GetExtension(file).ToLowerInvariant());
+            if (pdf != null)
+            {
+                var job2 = job.Clone();
+                job2.Target = pdf;
+                job2.Source = "file";
+                var outcome = PrintWithSumatra(pdf, job2, printer);
+                outcome.Engine = "LibreOffice+" + outcome.Engine;
+                return outcome;
+            }
+            Tools.Logger("未找到 LibreOffice，改用系统关联程序打印 Office 文件");
+            return PrintWithShellVerb(file, printer);
+        }
+
+        /// <summary>
+        /// OFD（国产版式文档，电子发票/电子公文）：优先调用配置的转换器转 PDF，
+        /// 否则尝试 LibreOffice（部分发行版带 OFD 插件），最后退回系统关联程序（WPS / 数科阅读器）。
+        /// </summary>
+        private PrintOutcome PrintOfd(string file, PrintJob job, string printer)
+        {
+            var converter = SettingsStore.Instance.Current.OfdConverter;
+            if (!string.IsNullOrWhiteSpace(converter) && File.Exists(converter))
+            {
+                var pdf = Path.Combine(SettingsStore.Instance.TempDir,
+                    Guid.NewGuid().ToString("N") + ".pdf");
+                var psi = new ProcessStartInfo
+                {
+                    FileName = converter,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    WorkingDirectory = SettingsStore.Instance.TempDir
+                };
+                // 约定：<converter> <输入.ofd> <输出.pdf>
+                psi.ArgumentList.Add(Path.GetFullPath(file));
+                psi.ArgumentList.Add(pdf);
+                try
+                {
+                    using (var p = Process.Start(psi))
+                    {
+                        if (p != null && p.WaitForExit(60000) && p.ExitCode == 0 && File.Exists(pdf))
+                        {
+                            var job2 = job.Clone();
+                            job2.Target = pdf;
+                            job2.Source = "file";
+                            var outcome = PrintWithSumatra(pdf, job2, printer);
+                            outcome.Engine = "OFD+" + outcome.Engine;
+                            return outcome;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Tools.Logger("OFD 转换失败: " + ex.Message);
+                }
+            }
+
+            // 无转换器时交给系统关联程序（WPS、数科 OFD 阅读器等支持 OFD 打印）
+            Tools.Logger("未配置 OFD 转换器，改用系统关联程序打印 OFD");
+            return PrintWithShellVerb(file, printer);
+        }
+
+        /// <summary>查找 LibreOffice soffice.exe（headless 转换 Office/OFD 用）。</summary>
+        private static string FindSoffice()
+        {
+            var candidates = new[]
+            {
+                Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\LibreOffice\program\soffice.exe"),
+                Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\LibreOffice\program\soffice.exe"),
+                @"C:\Program Files\LibreOffice\program\soffice.exe",
+                @"C:\Program Files (x86)\LibreOffice\program\soffice.exe"
+            };
+            foreach (var c in candidates) if (File.Exists(c)) return c;
+            return null;
         }
 
         private static string FindBrowser()

@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.Collections.Generic;
 using System.Dynamic;
 using System.IO;
@@ -54,6 +58,46 @@ namespace DuoAssistant.Services
             }
         }
 
+        /// <summary>
+        /// 条码 / 二维码生成并直接打印（同步）。
+        /// 参数：value（必填）、format（qr/code128/code39/ean13/…，默认 qr）、
+        /// width/height（px，默认 400）、caption（可选文字）、printer、copies、paperKind。
+        /// 生成 PNG 后经 SumatraPDF 直出，不经过系统 Shell，行为可控且静默。
+        /// </summary>
+        public string PrintBarcode(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var value = Str(dt, "value") ?? Str(dt, "text");
+                if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("缺少 value 字段");
+
+                var png = BarcodeGenerator.Generate(
+                    value,
+                    Str(dt, "format") ?? Str(dt, "barcodeType") ?? "qr",
+                    Int(dt, "width", 400),
+                    Int(dt, "height", 400),
+                    Str(dt, "caption"));
+
+                var job = BuildJob(dt, png);
+                var printer = string.IsNullOrWhiteSpace(job.Printer)
+                    ? new System.Drawing.Printing.PrinterSettings().PrinterName
+                    : job.Printer;
+                var outcome = _extended.PrintDirect(png, job, printer);
+                if (!outcome.Ok)
+                    return Result.error(outcome.Message, cmd: "PrintBarcode", data: new { detail = outcome.Detail, image = png });
+                return Result.success(data: new
+                {
+                    value, image = png, printer, engine = outcome.Engine,
+                    message = outcome.Message
+                }, cmd: "PrintBarcode", msg: outcome.Message);
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: "PrintBarcode");
+            }
+        }
+
         /// <summary>打印任意受支持类型的文件 / URL（同步）。</summary>
         public string PrintFile(string args)
         {
@@ -75,6 +119,145 @@ namespace DuoAssistant.Services
             catch (Exception ex)
             {
                 return Result.error(ex.Message, cmd: "PrintFile");
+            }
+        }
+
+        // ------------------------------------------------ 虚拟打印（输出 PDF / XPS 文件）
+
+        /// <summary>打印到 PDF 文件（Microsoft Print to PDF 虚拟打印机）。</summary>
+        public string PrintToPdf(string args) => VirtualPrint(args, "PrintToPdf", NativePrintService.PdfVirtualPrinter, ".pdf");
+
+        /// <summary>打印到 XPS 文件（Microsoft XPS Document Writer 虚拟打印机）。</summary>
+        /// <summary>
+        /// 打印到 XPS 文件。图片/文本用内置写入器（无需可选功能），其余类型回退虚拟打印机。
+        /// </summary>
+        public string PrintToXps(string args)
+        {
+            const string cmd = "PrintToXps";
+            try
+            {
+                var dt = ParseObject(args);
+                var target = Str(dt, "path") ?? Str(dt, "label") ?? Str(dt, "url") ?? Str(dt, "file");
+                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 path 字段");
+
+                var outPath = Str(dt, "output") ?? Str(dt, "outPath");
+                if (string.IsNullOrWhiteSpace(outPath))
+                    outPath = Path.Combine(SettingsStore.Instance.TempDir,
+                        "virtual_" + Guid.NewGuid().ToString("N") + ".xps");
+
+                var job = BuildJob(dt, target);
+                var outcome = _extended.PrintVirtualXps(job, outPath);
+                if (!outcome.Ok)
+                    return Result.error(outcome.Message, cmd: cmd, data: new { detail = outcome.Detail });
+                return Result.success(data: new
+                {
+                    output = Path.GetFullPath(outPath),
+                    engine = outcome.Engine,
+                    message = outcome.Message
+                }, cmd: cmd, msg: outcome.Message);
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: cmd);
+            }
+        }
+
+        private string VirtualPrint(string args, string cmd, string virtualPrinter, string defaultExt)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var target = Str(dt, "path") ?? Str(dt, "label") ?? Str(dt, "url") ?? Str(dt, "file");
+                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 path 字段");
+
+                var outPath = Str(dt, "output") ?? Str(dt, "outPath");
+                if (string.IsNullOrWhiteSpace(outPath))
+                    outPath = Path.Combine(SettingsStore.Instance.TempDir,
+                        "virtual_" + Guid.NewGuid().ToString("N") + defaultExt);
+
+                var job = BuildJob(dt, target);
+                var outcome = _extended.PrintVirtual(job, virtualPrinter, outPath);
+                if (!outcome.Ok)
+                    return Result.error(outcome.Message, cmd: cmd, data: new { detail = outcome.Detail });
+                return Result.success(data: new
+                {
+                    output = Path.GetFullPath(outPath),
+                    engine = outcome.Engine,
+                    message = outcome.Message
+                }, cmd: cmd, msg: outcome.Message);
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: cmd);
+            }
+        }
+
+        // ------------------------------------------------ ESC/POS 热敏小票
+
+        /// <summary>
+        /// ESC/POS 原始打印：文本 / 一维条码 / 二维码直接发送字节流。
+        /// printer 支持本地打印机名（Win32 RAW）或 host:port（TCP 9100 网络打印机）。
+        /// </summary>
+        public string PrintEscPos(string args)
+        {
+            const string cmd = "PrintEscPos";
+            try
+            {
+                var dt = ParseObject(args);
+                var printer = Str(dt, "printer") ?? SettingsStore.Instance.Current.DefaultPrinter ?? "";
+                var text = Str(dt, "text") ?? "";
+                var encoding = Str(dt, "encoding") ?? "GB2312";
+
+                var pos = new EscPos(encoding);
+                pos.Initialize();
+                pos.Align(Int(dt, "align", 0));
+                pos.Bold(Bool(dt, "bold", false));
+
+                if (!string.IsNullOrEmpty(text))
+                    foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
+                        pos.TextLine(line);
+
+                var barcode = Str(dt, "barcode") ?? Str(dt, "barcodeValue");
+                if (!string.IsNullOrEmpty(barcode))
+                {
+                    pos.Align(1);
+                    pos.Barcode(barcode,
+                        Str(dt, "barcodeFormat") ?? Str(dt, "format") ?? "code128",
+                        Int(dt, "barcodeHeight", 50),
+                        Int(dt, "barcodeWidth", 2));
+                    pos.Align(Int(dt, "align", 0));
+                }
+
+                var qrcode = Str(dt, "qrcode") ?? Str(dt, "qrValue");
+                if (!string.IsNullOrEmpty(qrcode))
+                {
+                    pos.Align(1);
+                    pos.QrCode(qrcode, Int(dt, "qrSize", 4));
+                    pos.Align(Int(dt, "align", 0));
+                }
+
+                if (Bool(dt, "cashDrawer", false)) pos.CashDrawer();
+
+                pos.Feed(Int(dt, "feed", 3));
+                if (Bool(dt, "cut", true)) pos.Cut(Str(dt, "cutMode") ?? "full");
+
+                var data = pos.ToArray();
+                var outcome = new EscPosService().Print(printer, data);
+                if (!outcome.Ok)
+                    return Result.error(outcome.Message, cmd: cmd, data: new { detail = outcome.Detail });
+
+                return Result.success(data: new
+                {
+                    printer,
+                    bytes = data.Length,
+                    engine = outcome.Engine,
+                    message = outcome.Message,
+                    dump = new EscPosService().SaveToFile(data)
+                }, cmd: cmd, msg: outcome.Message);
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: cmd);
             }
         }
 
@@ -296,6 +479,78 @@ namespace DuoAssistant.Services
             catch (Exception ex) { return Result.error(ex.Message, cmd: "CleanDisk"); }
         }
 
+        /// <summary>
+        /// 清理应用自产的临时文件（条码 PNG、ESC/POS dump、转换中间件等）。
+        /// 只扫描应用 temp/ 目录，阈值可设为 0（不限大小）；默认 dryRun=true，
+        /// 必须显式 dryRun:false 才真正删除；删除时默认走回收站。
+        /// </summary>
+        public string CleanAppTemp(string args)
+        {
+            const string cmd = "CleanAppTemp";
+            try
+            {
+                var dt = ParseObject(args);
+                var tempDir = SettingsStore.Instance.TempDir;
+                var dryRun = Bool(dt, "dryRun", true);
+                var recycle = Bool(dt, "useRecycleBin", SettingsStore.Instance.Current.UseRecycleBin);
+
+                var cutoff = DateTime.Now;
+                var maxAgeDays = Int(dt, "maxAgeDays", 0);
+                if (maxAgeDays > 0) cutoff = DateTime.Now.AddDays(-maxAgeDays);
+                // minSizeMB 允许 0（应用自产临时文件多为几 KB~几十 KB，默认阈值会全部漏掉）
+                var minBytes = (long)Math.Max(0, Int(dt, "minSizeMB", 0)) * 1024 * 1024;
+
+                var candidates = new List<CleanCandidate>();
+                if (Directory.Exists(tempDir))
+                {
+                    foreach (var f in Directory.EnumerateFiles(tempDir, "*", SearchOption.AllDirectories))
+                    {
+                        try
+                        {
+                            var fi = new FileInfo(f);
+                            if (!fi.Exists || fi.Length < minBytes) continue;
+                            if (fi.LastWriteTime > cutoff) continue;
+                            candidates.Add(new CleanCandidate
+                            {
+                                Path = f,
+                                SizeBytes = fi.Length,
+                                LastWrite = fi.LastWriteTime,
+                                Category = "应用临时文件"
+                            });
+                        }
+                        catch { /* 单文件无权限跳过 */ }
+                    }
+                }
+                candidates = candidates.OrderByDescending(x => x.SizeBytes).ToList();
+
+                if (dryRun)
+                {
+                    return Result.success(data: new
+                    {
+                        dryRun = true,
+                        count = candidates.Count,
+                        totalBytes = candidates.Sum(x => x.SizeBytes),
+                        totalText = CleanCandidate.FormatSize(candidates.Sum(x => x.SizeBytes)),
+                        items = candidates.Take(200).ToList()
+                    }, cmd: cmd, msg: "试运行完成，未删除任何文件");
+                }
+
+                // 真正删除：走回收站（可恢复）
+                var result = _cleaner.Clean(
+                    candidates.Select(x => x.Path), dryRun: false, useRecycleBin: recycle);
+                return Result.success(data: new
+                {
+                    dryRun = false,
+                    deleted = result.Deleted,
+                    skipped = result.Skipped,
+                    freedBytes = result.FreedBytes,
+                    freedText = result.FreedText,
+                    errors = result.Errors
+                }, cmd: cmd, msg: "应用临时文件清理完成");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: cmd); }
+        }
+
         public string GetDiskInfo(string args) =>
             Result.success(data: _cleaner.GetDiskInfo(), cmd: "GetDiskInfo");
 
@@ -338,8 +593,12 @@ namespace DuoAssistant.Services
                 languageConfigured = Utils.L10n.Configured,
                 languageDetected = Utils.L10n.Detected,
                 framework = Environment.Version.ToString(),
-                websocket = "ws://" + s.WsHost + ":" + s.WsPort,
+                websocket = "ws://" + s.WebHost + ":" + s.WebPort + "/ws",
                 webDocs = "http://" + s.WebHost + ":" + s.WebPort,
+                aoEnabled = s.AoEnabled,
+                aoOnline = AoClientService.Instance.Online,
+                aoRelayUrl = s.AoRelayUrl,
+                aoDeviceId = AoClientService.Instance.DeviceId,
                 defaultPrinter = _printers.GetDefault(),
                 supportedTypes = PrintFileTypes.All,
                 queue = PrintQueueService.Instance.Summary(),

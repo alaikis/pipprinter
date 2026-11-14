@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.IO;
 using System.Threading;
 using System.Windows.Forms;
@@ -15,6 +19,7 @@ namespace DuoAssistant
         private static WebsockServerService _ws;
         private static WebServerService _web;
         private static Home _home;
+        private static readonly AoClientService _ao = AoClientService.Instance;
 
         [STAThread]
         static void Main()
@@ -33,6 +38,14 @@ namespace DuoAssistant
 
             // 清理上次自动更新留下的 PipPrinter.exe.old-*（旧进程已退出，此时可删）
             UpdateService.CleanupLeftovers();
+
+            // 启动时自动清理应用自产临时文件（超过 TempAutoCleanMaxAgeDays 天；0=关闭）
+            var autoCleanDays = SettingsStore.Instance.Current.TempAutoCleanMaxAgeDays;
+            if (autoCleanDays > 0)
+            {
+                try { new DiskCleanerService().AutoCleanAppTemp(autoCleanDays); }
+                catch (Exception ex) { Utils.Tools.Logger("启动自动清理失败: " + ex.Message); }
+            }
 
             // 使用入口程序集对应的默认仓储。原实现 CreateRepository("") 会创建一个命名仓储，
             // 而 Tools.Logger 里的 LogManager.GetLogger("") 解析到的是程序集默认仓储，
@@ -54,16 +67,24 @@ namespace DuoAssistant
                 catch (Exception ex) { Utils.Tools.Logger("开机自启设置失败: " + ex.Message); }
             }
 
+            _web = new WebServerService();
+            // Main 为 STAThread 且尚未进入消息循环，同步等待启动是安全的
+            _web.StartAsync().GetAwaiter().GetResult();
+
+            // WebSocket 与 Web 共用同一 Kestrel 端口（端点 /ws），必须在 Web 启动后挂载
             try
             {
-                _ws = new WebsockServerService();
+                _ws = new WebsockServerService(_web);
                 _ws.Start();
             }
             catch (Exception ex) { Utils.Tools.Logger("WebSocket 启动失败: " + ex); }
 
-            _web = new WebServerService();
-            // Main 为 STAThread 且尚未进入消息循环，同步等待启动是安全的
-            _web.StartAsync().GetAwaiter().GetResult();
+            // Active-Online Print：主动向中继服务器建立出站长连接（仅 AoEnabled=true 时生效）
+            try
+            {
+                _ao.Start();
+            }
+            catch (Exception ex) { Utils.Tools.Logger("AO 客户端启动失败: " + ex); }
 
             // 使用无参 Run()：Application.Run(Form) 会自动 Show 主窗体，
             // 覆盖托盘驻留逻辑。静态引用保持窗体与 NotifyIcon 存活。
@@ -81,6 +102,7 @@ namespace DuoAssistant
             {
                 _web?.StopAsync().GetAwaiter().GetResult();
                 _ws?.Stop();
+                _ao.Stop();
                 PrintQueueService.Instance.Shutdown();
                 _singleInstance?.ReleaseMutex();
             }
@@ -91,6 +113,9 @@ namespace DuoAssistant
 
         public static bool WebRunning => _web?.IsRunning ?? false;
 
-        public static bool WsRunning => _ws != null;
+        public static bool WsRunning => _ws != null && (_web?.IsRunning ?? false);
+
+        /// <summary>当前 WebSocket 连接数。</summary>
+        public static int WebWsConnections => _web?.WsConnectionCount ?? 0;
     }
 }

@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -29,7 +33,7 @@ namespace DuoAssistant.Views.Pages
         public DiskTab()
         {
             Dock = DockStyle.Fill;
-            BackColor = SystemColors.Window;
+            BackColor = Theme.Card;
             _recycle.Text = L10n.T("删除时移入回收站");
             _list.CheckBoxes = true;
             _list.Columns[0].Width = 100;
@@ -42,7 +46,8 @@ namespace DuoAssistant.Views.Pages
                 Ui.Button(L10n.T("全选"), (s, e) => CheckAll(true), 80),
                 Ui.Button(L10n.T("全不选"), (s, e) => CheckAll(false), 90),
                 Ui.Button(L10n.T("试运行"), (s, e) => Clean(true), 90),
-                Ui.Button(L10n.T("确认清理"), (s, e) => Clean(false), 100),
+                Ui.Button(L10n.T("确认清理"), (s, e) => Clean(false), 100, primary: true),
+                Ui.Button(L10n.T("清理应用临时文件"), (s, e) => CleanAppTemp(), 150),
                 Ui.Button(L10n.T("导出清单"), (s, e) => Export(), 100),
                 _recycle,
                 _summary);
@@ -50,7 +55,7 @@ namespace DuoAssistant.Views.Pages
             var drivesBar = new Panel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(10, 6, 0, 0) };
             drivesBar.Controls.Add(_drives);
 
-            var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
+            var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12) };
             root.Controls.Add(_list);
             root.Controls.Add(drivesBar);
             root.Controls.Add(bar);
@@ -125,6 +130,42 @@ namespace DuoAssistant.Views.Pages
             MessageBox.Show(msg, dryRun ? L10n.T("试运行结果") : L10n.T("清理结果"),
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             if (!dryRun) RefreshData();
+        }
+
+        /// <summary>
+        /// 一键清理应用自产临时文件（条码 PNG、ESC/POS dump、转换中间件等）。
+        /// 先试运行列出数量，确认后走回收站删除（可恢复）。
+        /// </summary>
+        private void CleanAppTemp()
+        {
+            // 1) 试运行：拿数量与体积
+            var probe = JObject.Parse(CommandDispatcher.Execute("CleanAppTemp",
+                "{\"dryRun\":true,\"maxAgeDays\":0,\"minSizeMB\":0}"));
+            var pd = probe["data"] as JObject;
+            var count = pd?["count"]?.Value<int>() ?? 0;
+            if (count == 0)
+            {
+                MessageBox.Show(L10n.T("应用临时目录没有可清理的文件。"), L10n.T("提示"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var totalText = pd?["totalText"]?.ToString() ?? "0 B";
+            if (MessageBox.Show(
+                    string.Format(L10n.T("发现 {0} 个应用临时文件，合计 {1}。\n\n删除后将移入回收站（可恢复）。确认继续？"),
+                        count, totalText),
+                    L10n.T("清理应用临时文件"), MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
+                return;
+
+            // 2) 真正删除（回收站）
+            var res = JObject.Parse(CommandDispatcher.Execute("CleanAppTemp",
+                "{\"dryRun\":false,\"maxAgeDays\":0,\"minSizeMB\":0,\"useRecycleBin\":true}"));
+            var d = res["data"] as JObject;
+            var msg = L10n.F("已清理 {0} 个 · 跳过 {1} 个 · 释放 {2}",
+                d?["deleted"] ?? 0, d?["skipped"] ?? 0, d?["freedText"] ?? "0 B");
+            if (d?["errors"] is JArray errs && errs.Count > 0)
+                msg += "\n" + L10n.T("错误：") + string.Join("; ", errs.Select(x => x.ToString()));
+            MessageBox.Show(msg, L10n.T("清理结果"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+            RefreshData();
         }
 
         private void Export()

@@ -1,3 +1,7 @@
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,9 +14,9 @@ namespace DuoAssistant.Services
     /// </summary>
     public class AppSettings
     {
-        public string WsHost { get; set; } = "0.0.0.0";
-        public int WsPort { get; set; } = 19860;
-        public string WebHost { get; set; } = "127.0.0.1";
+        // 服务监听主机/端口：HTTP 文档/REST 与 WebSocket（/ws）共用同一端口。
+        // 原 WsHost/WsPort 已弃用并移除（旧配置文件中的这两个字段会被忽略）。
+        public string WebHost { get; set; } = "0.0.0.0";
         public int WebPort { get; set; } = 19861;
         public string DefaultPrinter { get; set; } = "";
         public bool AutoStart { get; set; } = true;
@@ -20,6 +24,9 @@ namespace DuoAssistant.Services
         public int CleanMaxAgeDays { get; set; } = 7;
         public int CleanMinSizeMB { get; set; } = 1;
         public bool UseRecycleBin { get; set; } = true;
+        // 启动时自动清理应用临时文件（temp/）：删除超过 N 天的文件；0=关闭。
+        // 只作用于应用自产临时文件（条码/ESC-POS dump/转换中间件等），不碰系统 Temp。
+        public int TempAutoCleanMaxAgeDays { get; set; } = 7;
         public List<string> AllowedCommands { get; set; } = new List<string>();
         public List<string> CleanWhitelist { get; set; } = new List<string>();
         // 本机指纹（MachineFingerprint.Get() 生成），跨浏览器/会话稳定，作为打印习惯的 machine-key
@@ -28,6 +35,17 @@ namespace DuoAssistant.Services
         public string UpdateManifestUrl { get; set; } = "https://gitee.com/alaikiscom/pipprinter/releases/latest";
         // 界面语言：auto（跟随系统）/ zh-CN / en；未匹配的系统语言回退英文
         public string Language { get; set; } = "auto";
+        // ---- Active-Online Print（AO 主动在线打印）----
+        // 启用后本终端主动连接中继服务器（AoRelay），接受广域网远程打印任务
+        public bool AoEnabled { get; set; } = false;
+        // 中继地址：ws(s)://host:port 或 http(s)://host:port（自动换算为 ws）
+        public string AoRelayUrl { get; set; } = "ws://127.0.0.1:8081";
+        // 中继共享密钥（AoRelay --key），留空表示不校验
+        public string AoKey { get; set; } = "";
+        // 终端显示名（中继设备列表展示用），留空则用机器名
+        public string AoDeviceName { get; set; } = "";
+        // OFD 转换器可执行文件路径（国产版式文档转 PDF；留空则用系统关联程序）
+        public string OfdConverter { get; set; } = "";
     }
 
     /// <summary>
@@ -82,10 +100,8 @@ namespace DuoAssistant.Services
                     if (loaded != null)
                     {
                         // 缺字段时补默认值，保证旧配置升级不炸
-                        if (loaded.WsPort <= 0) loaded.WsPort = 19860;
                         if (loaded.WebPort <= 0) loaded.WebPort = 19861;
-                        if (string.IsNullOrWhiteSpace(loaded.WsHost)) loaded.WsHost = "0.0.0.0";
-                        if (string.IsNullOrWhiteSpace(loaded.WebHost)) loaded.WebHost = "127.0.0.1";
+                        if (string.IsNullOrWhiteSpace(loaded.WebHost)) loaded.WebHost = "0.0.0.0";
                         if (loaded.CleanMaxAgeDays < 0) loaded.CleanMaxAgeDays = 7;
                         if (loaded.CleanMinSizeMB < 0) loaded.CleanMinSizeMB = 1;
                         if (loaded.AllowedCommands == null || loaded.AllowedCommands.Count == 0)
@@ -109,10 +125,11 @@ namespace DuoAssistant.Services
             {
                 AllowedCommands = new List<string>
                 {
-                    "PrintPdf", "PrintFile", "TemplatePrint", "QueuePrint", "GetQueue",
+                    "PrintPdf", "PrintFile", "PrintBarcode", "PrintToPdf", "PrintToXps", "PrintEscPos",
+                    "TemplatePrint", "QueuePrint", "GetQueue",
                     "RetryJob", "CancelJob", "ClearQueue", "GetPrinterList", "GetPrinterDetail",
                     "SetDefaultPrinter", "PrintTestPage", "GetPdfDriverConfig", "SetPdfPrintDriverConfig",
-                    "ScanDisk", "CleanDisk", "GetDiskInfo", "GetSettings", "SaveSettings", "GetStatus",
+                    "ScanDisk", "CleanDisk", "CleanAppTemp", "GetDiskInfo", "GetSettings", "SaveSettings", "GetStatus",
                     "GetMachineFingerprint", "CheckUpdate", "ApplyUpdate"
                 },
                 CleanWhitelist = new List<string>

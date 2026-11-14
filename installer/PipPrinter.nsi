@@ -1,5 +1,5 @@
 ﻿; ============================================================
-; PipPrinter / 小莱打印助手 — NSIS 安装向导
+; PipPrinter / 荔枝打印助手 (Lychee Printing Assistant) — NSIS 安装向导
 ; 公司：Alaikis Limited  https://alaikis.com
 ;
 ; 本地构建（Windows）：
@@ -32,7 +32,7 @@
   !define PUBURL "https://gitee.com/alaikiscom/pipprinter"
 !endif
 
-Name "PipPrinter ${VERSION} · 小莱打印助手"
+Name "荔枝打印助手 Lychee Printing Assistant ${VERSION}"
 OutFile "PipPrinter-Setup-v${VERSION}.exe"
 Unicode true
 InstallDir "$LOCALAPPDATA\Programs\PipPrinter"
@@ -40,19 +40,19 @@ InstallDirRegKey HKCU "Software\PipPrinter" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
-VIAddVersionKey "ProductName" "PipPrinter · 小莱打印助手"
+VIAddVersionKey "ProductName" "Lychee Printing Assistant · 荔枝打印助手"
 VIAddVersionKey "CompanyName" "${COMPANY}"
 VIAddVersionKey "LegalCopyright" "© 2026 ${COMPANY}. All rights reserved."
-VIAddVersionKey "FileDescription" "PipPrinter 安装程序"
+VIAddVersionKey "FileDescription" "荔枝打印助手 Lychee Printing Assistant 安装程序"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIProductVersion "1.0.2.0"
 
 ; 编译期路径分隔符用 ${SEP} 保证跨平台（Windows makensis 需反斜杠，Linux 需正斜杠）
-!define MUI_ICON "..${SEP}Resource${SEP}bitbug_favicon.ico"
-!define MUI_UNICON "..${SEP}Resource${SEP}bitbug_favicon.ico"
+!define MUI_ICON "..${SEP}Resource${SEP}app.ico"
+!define MUI_UNICON "..${SEP}Resource${SEP}app.ico"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\PipPrinter.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "启动 小莱打印助手 (Start PipPrinter)"
+!define MUI_FINISHPAGE_RUN_TEXT "启动 荔枝打印助手 (Start Lychee Printing Assistant)"
 !define MUI_FINISHPAGE_SHOWREADME ""
 !define MUI_FINISHPAGE_LINK "访问项目主页 (Project homepage)"
 !define MUI_FINISHPAGE_LINK_LOCATION "${PUBURL}"
@@ -109,7 +109,7 @@ Section "PipPrinter (required)" SEC_CORE
   WriteRegStr HKCU "Software\PipPrinter" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\PipPrinter" "Version" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PipPrinter" \
-    "DisplayName" "PipPrinter · 小莱打印助手"
+    "DisplayName" "Lychee Printing Assistant · 荔枝打印助手"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PipPrinter" \
     "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PipPrinter" \

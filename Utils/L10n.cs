@@ -1,3 +1,7 @@
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -77,8 +81,8 @@ namespace DuoAssistant.Utils
             ["已在系统托盘中运行。"] = " is already running in the system tray.",
 
             // ---- 状态栏 ----
-            ["WS {0}:{1} {2}   |   Web 文档 {3}   |   队列 等待 {4} / 打印中 {5} / 完成 {6} / 失败 {7}"] =
-                "WS {0}:{1} {2}   |   Web docs {3}   |   Queue: pending {4} / printing {5} / done {6} / failed {7}",
+            ["WS {0}:{1}/ws {2}   |   Web 文档 {3}   |   队列 等待 {4} / 打印中 {5} / 完成 {6} / 失败 {7}"] =
+                "WS {0}:{1}/ws {2}   |   Web docs {3}   |   Queue: pending {4} / printing {5} / done {6} / failed {7}",
             ["  [队列待处理]"] = "  [queue pending]",
 
             // ---- 打印页 ----
@@ -88,6 +92,8 @@ namespace DuoAssistant.Utils
             ["支持类型："] = "Supported types: ",
             ["  ·  PDF 走 SumatraPDF，Office/图片/文本走系统关联程序，HTML 走无头浏览器转 PDF"] =
                 "  ·  PDF via SumatraPDF; Office/images/text via system shell; HTML via headless browser to PDF",
+            ["  ·  纸张可选 A0–A5（A0/A1 自动换算毫米尺寸，需打印机驱动支持大幅面）"] =
+                "  ·  Paper A0–A5 (A0/A1 auto-converted to mm; large-format output requires a capable printer driver)",
             ["请先选择文件或填写 URL。"] = "Please select a file or enter a URL first.",
 
             // ---- 队列页 ----
@@ -167,7 +173,8 @@ namespace DuoAssistant.Utils
             ["本机指纹"] = "Machine Fingerprint",
             ["自动更新（Gitee）"] = "Auto Update (Gitee)",
             ["界面语言"] = "Interface Language",
-            ["WebSocket 监听："] = "WebSocket listen:",
+            ["WebSocket 端点："] = "WebSocket endpoint:",
+            ["与 Web 共用端口，无需单独配置"] = "Shares the port with Web; no separate configuration needed",
             ["Web 文档监听："] = "Web docs listen:",
             ["默认打印机："] = "Default printer:",
             ["保留天数："] = "Keep days:",
@@ -196,6 +203,22 @@ namespace DuoAssistant.Utils
             ["语言已保存，重启应用后生效。"] = "Language saved. Restart the app to apply.",
             ["配置已保存；端口/自启等改动需重启应用生效"] =
                 "Settings saved; restart the app to apply port/autostart changes",
+
+            // ---- AO（Active-Online Print 主动在线打印）----
+            ["主动在线打印（AO）"] = "Active-Online Print (AO)",
+            ["启用 AO 终端："] = "Enable AO terminal:",
+            ["中继地址："] = "Relay URL:",
+            ["共享密钥："] = "Shared key:",
+            ["终端名称："] = "Terminal name:",
+            ["AO 状态："] = "AO status:",
+            ["在线"] = "online",
+            ["离线"] = "offline",
+            ["未启用"] = "disabled",
+            ["AO 客户端运行中："] = "AO client running: ",
+            ["支持 ws:// / wss:// / http(s)://，自动换算为 ws；留空密钥则不校验"] =
+                "Accepts ws:// / wss:// / http(s):// (auto-converted to ws); leave the key blank to skip verification",
+            ["启用后本终端主动连接中继服务器，接受广域网远程打印任务（命令走白名单，仅允许已配置的命令）"] =
+                "When enabled, this terminal connects outbound to the relay server and accepts remote print jobs over the WAN (commands are restricted to the allowlist)",
 
             // ---- 更新相关 ----
             ["自动更新"] = "Auto update",

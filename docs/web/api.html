@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>REST API · PipPrinter</title>
+<title>REST API · 荔枝打印助手</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="layout">
 <aside class="sidebar">
-  <div class="brand">PipPrinter<small>小莱打印助手 · 开发与使用文档 v2.0</small></div>
+  <div class="brand">Lychee Printing Assistant<small>荔枝打印助手 · 开发与使用文档 v2.0</small></div>
   <nav class="nav">
     <div class="group">开始</div>
     <a href="index.html">总览与快速开始</a>
@@ -32,7 +32,8 @@
     <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
     <tbody>
       <tr><td><span class="badge ok">GET</span></td><td><code>/</code></td><td>文档站首页（静态文件）</td></tr>
-      <tr><td><span class="badge ok">GET</span></td><td><code>/api/status</code></td><td>应用版本、框架、端口、默认打印机、支持类型、队列摘要、运行时长</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/health</code></td><td>轻量探活：<code>status/app/version/uptimeSeconds/web/ws/wsConnections/aoOnline/queue</code>，供负载均衡与监控秒级判断</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/status</code></td><td>应用版本、框架、端口、默认打印机、支持类型、队列摘要、运行时长、语言、AO 状态</td></tr>
       <tr><td><span class="badge ok">GET</span></td><td><code>/api/commands</code></td><td>当前允许的命令清单</td></tr>
       <tr><td><span class="badge ok">GET</span></td><td><code>/api/printers</code></td><td>本机打印机列表与详情</td></tr>
       <tr><td><span class="badge ok">GET</span></td><td><code>/api/queue</code></td><td>打印队列全部任务与摘要</td></tr>
@@ -43,6 +44,10 @@
       <tr><td><span class="badge ok">GET</span></td><td><code>/api/docs</code></td><td>文档站 HTML 页面清单</td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/command</code></td><td><strong>通用命令入口</strong>：body 里带 <code>cmd</code>，等价于 WebSocket</td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/print</code></td><td>便捷入口：直接把 body 当作 <code>QueuePrint</code> 参数</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/barcode</code></td><td>便捷入口：生成条码/二维码并直接打印，body 即 <code>PrintBarcode</code> 参数</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/print/topdf</code></td><td>便捷入口：打印到 PDF 文件，body 即 <code>PrintToPdf</code> 参数</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/print/toxps</code></td><td>便捷入口：打印到 XPS 文件，body 即 <code>PrintToXps</code> 参数</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/escpos</code></td><td>便捷入口：ESC/POS 热敏小票原始打印，body 即 <code>PrintEscPos</code> 参数</td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/clean/scan</code></td><td>便捷入口：扫描磁盘，body 可空</td></tr>
     </tbody>
   </table>
@@ -72,6 +77,30 @@ curl http://127.0.0.1:19861/api/printers</code></pre>
 }</code></pre>
   <p><code>path</code> 也可以是 <code>http(s)</code> URL；<code>printer</code> 留空则使用系统默认打印机。</p>
 
+  <h2>条码 / 二维码</h2>
+  <pre><code>curl -X POST http://127.0.0.1:19861/api/barcode \
+  -H "Content-Type: application/json" \
+  -d '{"value":"SO-20261113-001","format":"code128","caption":"订单号","printer":"HP LaserJet"}'</code></pre>
+  <p>支持 <code>qr</code>、<code>code128</code>、<code>code39</code>、<code>code93</code>、<code>ean13</code>、<code>ean8</code>、<code>upca</code>、<code>itf</code>、<code>codabar</code>、<code>msi</code>、<code>pdf417</code>、<code>datamatrix</code>、<code>aztec</code>；<code>width</code>/<code>height</code> 默认 400px，<code>caption</code> 为可选文字。PNG 经 SumatraPDF 直出，不依赖系统看图软件。</p>
+
+  <h2>打印到文件（PDF / XPS 虚拟输出）</h2>
+  <pre><code># 打印到 PDF
+curl -X POST http://127.0.0.1:19861/api/print/topdf \
+  -H "Content-Type: application/json" \
+  -d '{"path":"C:\\docs\\a.xlsx","output":"C:\\out\\a.pdf"}'
+
+# 打印到 XPS（图片/文本用内置写入器，无需可选功能）
+curl -X POST http://127.0.0.1:19861/api/print/toxps \
+  -H "Content-Type: application/json" \
+  -d '{"path":"C:\\docs\\a.txt","output":"C:\\out\\a.xps"}'</code></pre>
+  <p><code>output</code> 缺省时落到应用 <code>temp/</code> 目录并返回绝对路径。PDF 走 Microsoft Print to PDF 虚拟打印机；XPS 对图片/文本使用内置 WPF 写入器（不依赖系统是否安装 XPS Document Writer），其余类型回退虚拟打印机。</p>
+
+  <h2>ESC/POS 热敏小票</h2>
+  <pre><code>curl -X POST http://127.0.0.1:19861/api/escpos \
+  -H "Content-Type: application/json" \
+  -d "{\"printer\":\"192.168.1.100:9100\",\"text\":\"欢迎光临\\n合计：¥88.00\",\"barcode\":\"20261113001\",\"barcodeFormat\":\"code128\",\"cut\":true}"</code></pre>
+  <p><code>printer</code> 支持本地打印机名（Win32 RAW）或 <code>host:port</code>（TCP 9100 网络打印机）。<code>encoding</code> 默认 <code>GB2312</code>（自动注册代码页提供程序，中文不乱码）；可选 <code>align</code>、<code>bold</code>、<code>qrcode</code>、<code>cashDrawer</code>、<code>feed</code>、<code>cut</code>/<code>cutMode</code>。返回 <code>bytes</code> 与字节流 <code>dump</code> 文件路径。</p>
+
   <h2>扫描与清理</h2>
   <pre><code>curl -X POST http://127.0.0.1:19861/api/command \
   -H "Content-Type: application/json" \
@@ -93,9 +122,21 @@ curl -X POST http://127.0.0.1:19861/api/command \
     <code>cleanWhitelist</code> 保护的目录内。<strong>不接受任意路径删除。</strong>
   </div>
 
+  <h2>清理应用临时文件</h2>
+  <pre><code># 1) 试运行：列出可清理数量与体积（不删除）
+curl -X POST http://127.0.0.1:19861/api/command \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"CleanAppTemp","dryRun":true}'
+
+# 2) 确认后真正删除（默认移入回收站，可恢复）
+curl -X POST http://127.0.0.1:19861/api/command \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"CleanAppTemp","dryRun":false,"useRecycleBin":true}'</code></pre>
+  <p><code>CleanAppTemp</code> 只扫描应用 <code>temp/</code> 目录（条码 PNG、ESC/POS dump、Office/OFD 转换中间件等自产文件），阈值 <code>minSizeMB</code> 可为 0（不限大小）。与 <code>CleanDisk</code> 的区别：后者扫系统 Temp + 应用目录且默认最小 1MB，前者专注应用自产小文件、阈值可为 0。另可在「磁盘清理」页点「清理应用临时文件」一键操作，启动时还会按 <code>tempAutoCleanMaxAgeDays</code>（默认 7 天，0=关闭）自动清理过期文件。</p>
+
   <h2>状态查询</h2>
   <pre><code>curl http://127.0.0.1:19861/api/status</code></pre>
-  <p>返回示例字段：<code>app</code>、<code>version</code>、<code>framework</code>、<code>websocket</code>、<code>webDocs</code>、<code>defaultPrinter</code>、<code>supportedTypes</code>、<code>queue</code>、<code>uptimeSeconds</code>。</p>
+  <p>返回示例字段：<code>app</code>、<code>appCn</code>、<code>version</code>、<code>framework</code>、<code>websocket</code>、<code>webDocs</code>、<code>language</code>/<code>languageConfigured</code>/<code>languageDetected</code>、<code>aoEnabled</code>/<code>aoOnline</code>/<code>aoRelayUrl</code>/<code>aoDeviceId</code>、<code>defaultPrinter</code>、<code>supportedTypes</code>、<code>queue</code>、<code>uptimeSeconds</code>。</p>
 
   <h2>错误码</h2>
   <table>
@@ -109,7 +150,7 @@ curl -X POST http://127.0.0.1:19861/api/command \
     </tbody>
   </table>
 
-  <div class="footer">PipPrinter / 小莱打印助手 v2.0 · REST API</div>
+  <div class="footer">Lychee Printing Assistant / 荔枝打印助手 v2.0 · REST API</div>
 </main>
 </div>
 </body>

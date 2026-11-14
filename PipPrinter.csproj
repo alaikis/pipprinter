@@ -5,9 +5,15 @@
     <!-- .NET 10 是最新 LTS；保持 WinForms 桌面应用 -->
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <!--
+      WPF 仅用于内置 XPS 写入（Services/XpsWriterService.cs，System.Windows.Xps.Packaging），
+      使「打印到 XPS」不依赖 Windows 可选功能 Microsoft XPS Document Writer。
+      托盘 UI 仍是 WinForms，WPF Application 未启动，XPS 写入在独立 STA 线程执行。
+    -->
+    <UseWPF>true</UseWPF>
     <AssemblyName>PipPrinter</AssemblyName>
     <RootNamespace>PipPrinter</RootNamespace>
-    <AssemblyTitle>小莱打印助手</AssemblyTitle>
+    <AssemblyTitle>荔枝打印助手</AssemblyTitle>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
@@ -15,16 +21,23 @@
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <!-- 版本规范 vMAJOR.FEATURE.PATCH：补丁版递增 PATCH(001→002)，大变更递增 FEATURE(1.01.000)，重大重构递增 MAJOR -->
-    <Version>1.01.000</Version>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <FileVersion>1.1.0.0</FileVersion>
-    <Product>PipPrinter</Product>
-    <Description>PipPrinter / 小莱打印助手 — 托盘常驻的本地打印助手</Description>
+    <Version>1.01.001</Version>
+    <AssemblyVersion>1.1.0.1</AssemblyVersion>
+    <FileVersion>1.1.0.1</FileVersion>
+    <Product>Lychee Printing Assistant</Product>
+    <Description>Lychee Printing Assistant / 荔枝打印助手 — 托盘常驻的本地打印助手</Description>
+    <!-- exe 文件图标（资源管理器/桌面/任务栏显示） -->
+    <ApplicationIcon>Resource\app.ico</ApplicationIcon>
     <Company>Alaikis Limited</Company>
     <Authors>Alaikis Limited</Authors>
     <Copyright>© 2026 Alaikis Limited. All rights reserved.</Copyright>
     <!-- iTextSharp / BouncyCastle 是 .NET Framework 兼容包，NU1701 属预期 -->
     <NoWarn>$(NoWarn);NU1701;WFO5001</NoWarn>
+    <!--
+      AoRelay 是解决方案中的独立项目（子目录），其 obj/bin 与源码不应被本项目的
+      **/*.cs、**/* 默认 glob 误收，否则会把 AoRelay 的 AssemblyInfo 编进主程序集。
+    -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);AoRelay/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <!-- Kestrel / ASP.NET Core minimal API 用于内嵌 Web 文档服务，版本随 .NET 10 共享框架 -->
@@ -33,16 +46,24 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Fleck 1.2.0 为该库最后一个稳定版 -->
-    <PackageReference Include="Fleck" Version="1.2.0" />
+    <!--
+      Fleck 已移除：WebSocket 服务端迁移到 ASP.NET Core 原生实现（见 Services/WsHub.cs），
+      客户端使用 BCL ClientWebSocket（见 Services/AoClientService.cs）。
+    -->
     <!-- iTextSharp 最新稳定版（保留作 PDF 内容解析扩展点，NU1701 已知） -->
     <PackageReference Include="iTextSharp" Version="5.5.13.6" />
     <!-- log4net 2.x 最新稳定版；v3 改命名空间且会破坏现有 appender 配置 -->
     <PackageReference Include="log4net" Version="2.0.17" />
     <!-- Newtonsoft.Json 最新稳定版；14.x 仍为 beta -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!--
+      SVG 渲染（打印 SVG 文件用）。相比 headless 浏览器转 PDF 更可靠：
+      不依赖 Edge/Chrome 后台进程与用户配置，直接渲染成位图后走 GDI+ 打印管线。
+    -->
+    <PackageReference Include="Svg" Version="3.4.7" />
     <!-- 本机指纹：Win32_Volume 取卷序列号（WMI） -->
     <PackageReference Include="System.Management" Version="10.0.0" />
+    <PackageReference Include="ZXing.Net" Version="0.16.10" />
     <!--
       移除 Microsoft.Extensions.Logging.Log4Net.AspNetCore：
       1) 项目从未使用 AddLog4Net()，属死依赖；
@@ -55,11 +76,14 @@
     <None Update="pdfreader\SumatraPDF.exe">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="Resource\bitbug_favicon.ico">
+    <None Update="Resource\app.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="Resource\icon.png">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    <None Update="Resource\tray.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resource\icon-256.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Remove="log4net.config" />
     <None Update="config\log4net.config">

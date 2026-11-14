@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AoRelay — Active-Online Print 中继服务器。
+    独立于主应用（PipPrinter）运行，部署在公网/内网可达的中继节点上：
+      · WS  /device  打印终端（PipPrinter 客户端）出站长连接，注册 + 心跳 + 接收任务
+      · WS  /client  业务方（网页/中台）连接，发现设备并下发打印任务
+      · GET /api/devices  在线设备列表（JSON）
+      · GET /ao.html      浏览器测试页
+    协议见 docs/web/ao.html。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>AoRelay</AssemblyName>
+    <RootNamespace>AoRelay</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Version>1.01.001</Version>
+    <AssemblyVersion>1.1.0.1</AssemblyVersion>
+    <FileVersion>1.1.0.1</FileVersion>
+    <Product>Lychee Printing Assistant AO Relay</Product>
+    <Description>Active-Online Print 中继服务器（Lychee Printing Assistant）</Description>
+    <Company>Alaikis Limited</Company>
+    <Authors>Alaikis Limited</Authors>
+    <Copyright>© 2026 Alaikis Limited. All rights reserved.</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 传输层为 ASP.NET Core 原生 WebSocket，无需 Fleck -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+</Project>
