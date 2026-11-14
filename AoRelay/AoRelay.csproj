@@ -16,9 +16,9 @@
     <RootNamespace>AoRelay</RootNamespace>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <Version>1.01.001</Version>
-    <AssemblyVersion>1.1.0.1</AssemblyVersion>
-    <FileVersion>1.1.0.1</FileVersion>
+    <Version>1.01.002</Version>
+    <AssemblyVersion>1.1.0.2</AssemblyVersion>
+    <FileVersion>1.1.0.2</FileVersion>
     <Product>Lychee Printing Assistant AO Relay</Product>
     <Description>Active-Online Print 中继服务器（Lychee Printing Assistant）</Description>
     <Company>Alaikis Limited</Company>
