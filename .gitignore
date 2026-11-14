@@ -1,15 +1,18 @@
-/bin/
-/packages/
-/obj/
-/release/
-/dist/
-/.vs/
-/.idea/
-/temp/
-/data/
-/log/
-/lib/
+bin/
+packages/
+obj/
+release/
+dist/
+.vs/
+.idea/
+temp/
+data/
+log/
+lib/
 *.user
 
 # 安装包制品由流水线/本地构建生成，不入库
 installer/*.exe
+
+# SumatraPDF 运行期设置（含最近文件列表等本机状态）
+pdfreader/SumatraPDF-settings.txt

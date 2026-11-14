@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -41,6 +45,9 @@ namespace DuoAssistant.Services
     public class DiskCleanerService
     {
         private const int MaxScanFiles = 3000;
+
+        /// <summary>单个扫描根目录的最大候选文件数。各根目录独立计数，避免系统 Temp 文件极多时占满全局上限、挤掉应用目录。</summary>
+        private const int MaxPerRoot = 500;
 
         /// <summary>允许扫描（也只允许删除）的根目录。</summary>
         public List<string> AllowedRoots()
@@ -113,13 +120,14 @@ namespace DuoAssistant.Services
             {
                 var category = root.EndsWith("log", StringComparison.OrdinalIgnoreCase)
                     ? "应用日志" : "临时文件";
+                var rootCount = 0;
                 try
                 {
-                    var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-                        .Take(MaxScanFiles);
+                    var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories);
                     foreach (var file in files)
                     {
-                        if (result.Count >= MaxScanFiles) break;
+                        // 每根目录独立配额：超过即跳过该根，不挤占其他目录的份额
+                        if (rootCount >= MaxPerRoot) break;
                         try
                         {
                             var full = Path.GetFullPath(file);
@@ -138,6 +146,7 @@ namespace DuoAssistant.Services
                                 LastWrite = fi.LastWriteTime,
                                 Category = category
                             });
+                            rootCount++;
                         }
                         catch { /* 单个文件无权限时跳过 */ }
                     }
@@ -148,6 +157,36 @@ namespace DuoAssistant.Services
                 }
             }
             return result.OrderByDescending(x => x.SizeBytes).ToList();
+        }
+
+        /// <summary>
+        /// 启动时自动清理应用自产临时文件（temp/）。删除超过 maxAgeDays 天的文件，
+        /// 只作用于应用目录，不碰系统 Temp；单文件锁失败静默跳过，不影响启动。
+        /// </summary>
+        public int AutoCleanAppTemp(int maxAgeDays)
+        {
+            var deleted = 0;
+            var cutoff = DateTime.Now.AddDays(-maxAgeDays);
+            try
+            {
+                var tempDir = SettingsStore.Instance.TempDir;
+                if (!Directory.Exists(tempDir)) return 0;
+                foreach (var f in Directory.EnumerateFiles(tempDir, "*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        var fi = new FileInfo(f);
+                        if (!fi.Exists || fi.LastWriteTime > cutoff) continue;
+                        File.Delete(f);
+                        deleted++;
+                    }
+                    catch { /* 单文件被占用或无权限时跳过，不影响其余清理 */ }
+                }
+                if (deleted > 0)
+                    Tools.Logger("启动自动清理：应用临时文件删除 " + deleted + " 个（超过 " + maxAgeDays + " 天）");
+            }
+            catch { /* 目录不可读等整体异常时放弃，不影响启动 */ }
+            return deleted;
         }
 
         /// <summary>

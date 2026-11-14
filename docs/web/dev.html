@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>构建与开发规范 · PipPrinter</title>
+<title>构建与开发规范 · 荔枝打印助手</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="layout">
 <aside class="sidebar">
-  <div class="brand">PipPrinter<small>小莱打印助手 · 开发与使用文档 v2.0</small></div>
+  <div class="brand">Lychee Printing Assistant<small>荔枝打印助手 · 开发与使用文档 v2.0</small></div>
   <nav class="nav">
     <div class="group">开始</div>
     <a href="index.html">总览与快速开始</a>
@@ -85,14 +85,21 @@ makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrin
 ├── Services/
 │   ├── SettingsStore.cs             # appsettings.json 读写单例（含目录约定）
 │   ├── CommandDispatcher.cs         # 唯一命令分派入口 + 白名单
-│   ├── PrintServices.cs             # 20 个对外命令实现
+│   ├── PrintServices.cs             # 27 个对外命令实现
 │   ├── PrintQueueService.cs         # 顺序队列、持久化、崩溃恢复、变更事件
-│   ├── ExtendedPrintService.cs      # 多类型分流打印引擎
+│   ├── ExtendedPrintService.cs      # 多类型分流打印引擎（PDF/Office/图片/文本/XPS/SVG/OFD）
+│   ├── NativePrintService.cs        # GDI+ 原生打印（图片/文本）+ 虚拟输出到 PDF/XPS
+│   ├── EscPosService.cs             # ESC/POS 热敏小票字节流（本地 RAW / TCP 9100）
+│   ├── XpsWriterService.cs          # 内置 XPS 写入器（WPF，不依赖可选功能）
+│   ├── BarcodeGenerator.cs          # ZXing.Net 条码/二维码生成
 │   ├── PrinterService.cs            # 本机打印机、默认切换、测试页
 │   ├── DiskCleanerService.cs        # 扫描 / 白名单 / 回收站删除
-│   ├── WebServerService.cs          # Kestrel 静态站 + REST
-│   ├── WebsockServerService.cs      # Fleck WS 服务 + 队列变更推送
+│   ├── WebServerService.cs          # Kestrel 静态站 + REST + /health
+│   ├── WsHub.cs                     # ASP.NET Core 原生 WebSocket 连接中心
+│   ├── WebsockServerService.cs      # WS 门面 + 队列变更广播
+│   ├── AoClientService.cs           # AO 终端（出站长连接、心跳、自动重连）
 │   └── BaseServices.cs              # 开机自启（HKCU Run）
+├── AoRelay/                         # Active-Online Print 中继服务器（独立控制台项目）
 ├── Utils/
 │   ├── Result.cs                    # 统一响应结构
 │   ├── Tools.cs                     # 日志辅助
@@ -140,16 +147,22 @@ makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrin
   <table>
     <thead><tr><th>键</th><th>默认</th><th>说明</th></tr></thead>
     <tbody>
-      <tr><td><code>wsHost / wsPort</code></td><td><code>0.0.0.0 / 19860</code></td><td>WebSocket 监听地址；建议生产改 <code>127.0.0.1</code> 或限制防火墙</td></tr>
-      <tr><td><code>webHost / webPort</code></td><td><code>127.0.0.1 / 19861</code></td><td>文档站与 REST 监听地址</td></tr>
+      <tr><td><code>webHost / webPort</code></td><td><code>0.0.0.0 / 19861</code></td><td>Kestrel 统一端口：文档站、REST 与 WebSocket <code>/ws</code> 共用；建议生产改 <code>127.0.0.1</code> 或限制防火墙</td></tr>
       <tr><td><code>defaultPrinter</code></td><td><code>""</code></td><td>空 = 跟随系统默认</td></tr>
+      <tr><td><code>language</code></td><td><code>auto</code></td><td>界面语言：<code>auto</code>（检测系统 UI 语言，<code>zh*</code> → 简中，其余英文兜底）/ <code>zh-CN</code> / <code>en</code>，重启生效</td></tr>
+      <tr><td><code>machineId</code></td><td><code>""</code></td><td>本机指纹持久化值（首次调用 <code>GetMachineFingerprint</code> 时写入）</td></tr>
+      <tr><td><code>updateManifestUrl</code></td><td>Gitee latest</td><td>自动更新清单地址（Gitee API v5 解析 Release 附件直链）</td></tr>
+      <tr><td><code>aoEnabled / aoRelayUrl</code></td><td><code>false / ws://127.0.0.1:8081</code></td><td>AO 终端开关与中继地址；设置页启用后立即生效</td></tr>
+      <tr><td><code>aoKey / aoDeviceName</code></td><td><code>"" / ""</code></td><td>AO 共享密钥（留空不校验）/ 中继内唯一设备名（缺省用机器名）</td></tr>
+      <tr><td><code>ofdConverter</code></td><td><code>""</code></td><td>OFD 转换器路径；配置后 <code>.ofd</code>（电子发票）先转 PDF 再打印，否则交给系统关联程序</td></tr>
       <tr><td><code>autoStart</code></td><td><code>true</code></td><td>写 HKCU Run，无需管理员权限</td></tr>
       <tr><td><code>logLevel</code></td><td><code>DEBUG</code></td><td>UI 展示用；log4net 分级 appender 见 log4net.config</td></tr>
       <tr><td><code>cleanMaxAgeDays</code></td><td><code>7</code></td><td>只扫描超过该天数的文件</td></tr>
       <tr><td><code>cleanMinSizeMB</code></td><td><code>1</code></td><td>小于该体积的文件不纳入扫描</td></tr>
+      <tr><td><code>tempAutoCleanMaxAgeDays</code></td><td><code>7</code></td><td>启动时自动删除应用 <code>temp/</code> 下超过该天数的文件；<code>0</code> = 关闭。仅作用于应用自产临时文件，不碰系统 Temp</td></tr>
       <tr><td><code>useRecycleBin</code></td><td><code>true</code></td><td>删除时移入回收站</td></tr>
       <tr><td><code>cleanWhitelist</code></td><td>系统目录 / 桌面 / 文档 / 下载 / AppData</td><td>保护目录，支持环境变量</td></tr>
-      <tr><td><code>allowedCommands</code></td><td>20 项</td><td>反射分派白名单</td></tr>
+      <tr><td><code>allowedCommands</code></td><td>28 项</td><td>反射分派白名单（WS / REST / UI 共用）</td></tr>
     </tbody>
   </table>
 
@@ -158,7 +171,8 @@ makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrin
     <thead><tr><th>依赖</th><th>旧版</th><th>当前</th><th>说明</th></tr></thead>
     <tbody>
       <tr><td>目标框架</td><td><code>net8.0-windows</code></td><td><code>net10.0-windows</code> <span class="badge ok">LTS</span></td><td>最新长期支持版</td></tr>
-      <tr><td>Fleck</td><td>1.2.0</td><td>1.2.0</td><td>已是该库最后一个稳定版</td></tr>
+      <tr><td>Fleck</td><td>1.2.0</td><td><strong>已移除</strong></td><td>2018 年停维护、纯服务端无客户端实现、不支持原生 TLS；WebSocket 已迁移到 ASP.NET Core 原生实现（WS 与 Web 共用 19861 端口 <code>/ws</code>，一条反代规则即可上 TLS）</td></tr>
+      <tr><td>ZXing.Net</td><td>—</td><td>0.16.10</td><td>条码/二维码原生生成（<code>qr</code>/<code>code128</code>/…/<code>datamatrix</code>/<code>aztec</code>）</td></tr>
       <tr><td>iTextSharp</td><td>5.5.13.3</td><td>5.5.13.6</td><td>保留为 PDF 内容解析扩展点；NU1701 已知（.NET Framework 兼容包）</td></tr>
       <tr><td>log4net</td><td>2.0.17</td><td>2.0.17</td><td>2.x 最新稳定；v3 改命名空间且会破坏现有 appender 配置</td></tr>
       <tr><td>Newtonsoft.Json</td><td>13.0.3</td><td>13.0.4</td><td>最新稳定（14.x 仍为 beta）</td></tr>
@@ -169,7 +183,7 @@ makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrin
 
   <h2>本次变更摘要</h2>
   <ul>
-    <li>产品定名：英文名 <strong>PipPrinter</strong>，中文名 <strong>小莱打印助手</strong>；程序集 / 项目 / 解决方案统一为 <code>PipPrinter</code>，可执行文件 <code>PipPrinter.exe</code></li>
+    <li>产品定名：英文名 <strong>Lychee Printing Assistant</strong>，中文名 <strong>荔枝打印助手</strong>；程序集 / 项目 / 解决方案保持 <code>PipPrinter</code>（避免破坏更新器 / 快捷方式 / 注册表路径），可执行文件 <code>PipPrinter.exe</code>，应用与托盘图标为荔枝主题 <code>Resource\app.ico</code> / <code>Resource\tray.ico</code></li>
     <li>主窗口默认展示「打印队列」页；双击托盘图标显示主窗口（不再切换隐藏），最小化/关闭收回托盘</li>
     <li>升级 .NET 8 → .NET 10 LTS，依赖升级到各自最新稳定版并移除冲突死依赖</li>
     <li>托盘新增 8 项右键菜单；主窗体改为 6 页 TabControl（打印 / 队列 / 打印机 / 磁盘清理 / 设置 / 日志）</li>
@@ -180,8 +194,20 @@ makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrin
     <li>新增内嵌 ASP.NET Core 文档站与 REST API</li>
     <li>反射分派收敛为命令白名单；单实例 Mutex；开机自启改 HKCU 并修正 exe 路径</li>
   </ul>
+  <p><strong>后续增强（当前版本）：</strong></p>
+  <ul>
+    <li>WebSocket 迁移到 <strong>ASP.NET Core 原生</strong>（<code>WsHub</code>）：与 Web 文档/REST 共用 19861 端口 <code>/ws</code>，移除 Fleck，一条反代规则即可上 TLS；新增 <code>/health</code> 探活端点</li>
+    <li>打印方式扩展：<strong>GDI+ 原生打印</strong>（图片/文本，含多帧 TIFF/GIF 逐页）、<strong>ESC/POS 热敏小票</strong>（本地 RAW / TCP 9100）、<strong>虚拟打印到 PDF/XPS</strong>、<strong>XPS 文档打印</strong>（内置 WPF 写入器，不依赖可选功能）</li>
+    <li>文件类型扩展：新增 <code>.svg</code> / <code>.xps</code> / <code>.ofd</code>（电子发票，可配转换器）；Office 原生解析经 LibreOffice headless 转 PDF</li>
+    <li><strong>条码/二维码原生生成</strong>（ZXing.Net，13 种码制），PNG 经 SumatraPDF 直出</li>
+    <li><strong>Active-Online Print</strong>：自建 <code>AoRelay</code> 中继 + 终端出站长连接（hello 注册 / 30s 心跳 / 指数退避重连 / 白名单执行），支持广域网远程打印</li>
+    <li>多语言：自动检测系统 UI 语言（<code>zh*</code> → 简中，其余英文兜底），可在设置页固定</li>
+    <li>临时文件治理：新增 <code>CleanAppTemp</code> 一键清理应用自产临时文件；启动时按 <code>tempAutoCleanMaxAgeDays</code>（默认 7 天，0=关闭）自动清理；扫描改为每根目录独立配额（默认 500），系统 Temp 不再挤掉应用目录</li>
+    <li>许可证：<strong>木兰宽松许可证 Mulan PSL-2.0</strong>（OSI 认证、中国自主知识产权、商业友好）</li>
+    <li>品牌与 UI：荔枝红主题（Wise 风格设计语言）+ 荔枝主题应用/托盘图标</li>
+  </ul>
 
-  <div class="footer">PipPrinter / 小莱打印助手 v2.0 · /impetus（OpenSpec + Superpowers）</div>
+  <div class="footer">Lychee Printing Assistant / 荔枝打印助手 v2.0 · /impetus（OpenSpec + Superpowers）</div>
 </main>
 </div>
 </body>

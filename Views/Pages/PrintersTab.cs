@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 using DuoAssistant.Services;
@@ -18,7 +22,7 @@ namespace DuoAssistant.Views.Pages
         public PrintersTab()
         {
             Dock = DockStyle.Fill;
-            BackColor = SystemColors.Window;
+            BackColor = Theme.Card;
             _list.Columns[0].Width = 240;
             _list.Columns[1].Width = 200;
             _list.Columns[2].Width = 130;
@@ -28,13 +32,13 @@ namespace DuoAssistant.Views.Pages
 
             var bar = Ui.Toolbar(
                 Ui.Button(L10n.T("刷新列表"), (s, e) => RefreshData(), 100),
-                Ui.Button(L10n.T("设为默认"), (s, e) => SetDefault(), 100),
+                Ui.Button(L10n.T("设为默认"), (s, e) => SetDefault(), 100, primary: true),
                 Ui.Button(L10n.T("打印测试页"), (s, e) => TestPage(), 110),
                 Ui.Button(L10n.T("打开文档"), (s, e) => System.Diagnostics.Process.Start(
                     new System.Diagnostics.ProcessStartInfo(Program.DocsUrl) { UseShellExecute = true }), 100),
                 _info);
 
-            var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
+            var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12) };
             root.Controls.Add(_list);
             root.Controls.Add(bar);
             Controls.Add(root);

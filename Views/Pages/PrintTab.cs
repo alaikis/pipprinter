@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -16,7 +20,7 @@ namespace DuoAssistant.Views.Pages
         private readonly NumericUpDown _copies = Ui.Number(1, 99, 1);
         private readonly ComboBox _fit = Ui.Combo(110);
         private readonly ComboBox _scale = Ui.Combo(110);
-        private readonly TextBox _paper = Ui.Input(90);
+        private readonly ComboBox _paper = Ui.EditableCombo(100);
         private readonly TextBox _pages = Ui.Input(90);
         private readonly TextBox _output = Ui.Input(0, true);
         private readonly Label _hint = Ui.Label("");
@@ -24,14 +28,14 @@ namespace DuoAssistant.Views.Pages
         public PrintTab()
         {
             Dock = DockStyle.Fill;
-            BackColor = SystemColors.Window;
+            BackColor = Theme.Card;
             BuildUi();
             RefreshData();
         }
 
         private void BuildUi()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(8) };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(12) };
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -49,6 +53,14 @@ namespace DuoAssistant.Views.Pages
             _fit.SelectedIndex = 0;
             _scale.Items.AddRange(new object[] { "portrait", "landscape" });
             _scale.SelectedIndex = 0;
+            // 纸张预设：auto 按页面自身尺寸；A0/A1 由服务层换算为 SumatraPDF 自定义尺寸；
+            // 其余为 SumatraPDF 标准名；下拉可直接键入驱动名或 "210mm x 297mm" 自定义值
+            _paper.Items.AddRange(new object[]
+            {
+                "auto", "A0", "A1", "A2", "A3", "A4", "A5",
+                "letter", "legal", "tabloid", "statement"
+            });
+            _paper.SelectedIndex = _paper.Items.IndexOf("A4");
             _pages.Text = "1-";
             var row2 = Ui.Toolbar(
                 Ui.Label(L10n.T("份数：")), _copies,
@@ -59,14 +71,15 @@ namespace DuoAssistant.Views.Pages
             root.Controls.Add(row2, 0, 1);
 
             var row3 = Ui.Toolbar(
-                Ui.Button(L10n.T("立即打印"), (s, e) => Run("PrintFile"), 120),
+                Ui.Button(L10n.T("立即打印"), (s, e) => Run("PrintFile"), 120, primary: true),
                 Ui.Button(L10n.T("加入队列"), (s, e) => Run("QueuePrint"), 120),
                 Ui.Button(L10n.T("打印测试页"), (s, e) => TestPage(), 120),
                 Ui.Button(L10n.T("清空输出"), (s, e) => _output.Clear(), 90));
             root.Controls.Add(row3, 0, 2);
 
             _hint.Text = L10n.T("支持类型：") + string.Join(" / ", PrintFileTypes.All) +
-                         L10n.T("  ·  PDF 走 SumatraPDF，Office/图片/文本走系统关联程序，HTML 走无头浏览器转 PDF");
+                         L10n.T("  ·  PDF 走 SumatraPDF，Office/图片/文本走系统关联程序，HTML 走无头浏览器转 PDF") +
+                         L10n.T("  ·  纸张可选 A0–A5（A0/A1 自动换算毫米尺寸，需打印机驱动支持大幅面）");
             _hint.ForeColor = Color.DimGray;
             _hint.AutoSize = true;
             root.Controls.Add(_hint, 0, 3);

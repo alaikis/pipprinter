@@ -1,3 +1,7 @@
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,16 +20,30 @@ using Newtonsoft.Json.Linq;
 namespace DuoAssistant.Services
 {
     /// <summary>
-    /// 内嵌 ASP.NET Core (Kestrel) Web 服务：托管 docs/web 静态文档站 + REST 命令端点。
-    /// 与托盘进程同生命周期，端口由 appsettings.json 配置。
+    /// 内嵌 ASP.NET Core (Kestrel) Web 服务：托管 docs/web 静态文档站 + REST 命令端点
+    /// + 原生 WebSocket（/ws，与 HTTP 同端口）。与托盘进程同生命周期，端口由 appsettings.json 配置。
     /// </summary>
     public sealed class WebServerService
     {
         private WebApplication _app;
+        private readonly WsHub _ws = new WsHub();
 
         public string Endpoint { get; }
         public bool IsRunning { get; private set; }
         public string LastError { get; private set; }
+
+        /// <summary>WebSocket 端点（与 HTTP 共用主机/端口）。</summary>
+        public string WebSocketEndpoint
+        {
+            get
+            {
+                var s = SettingsStore.Instance.Current;
+                var scheme = s.WebHost.StartsWith("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws";
+                return scheme + "://" + s.WebHost + ":" + s.WebPort + "/ws";
+            }
+        }
+
+        public int WsConnectionCount => _ws.Count;
 
         public WebServerService()
         {
@@ -60,6 +78,8 @@ namespace DuoAssistant.Services
 
                 var app = builder.Build();
                 app.UseCors("local");
+                // 原生 WebSocket：/ws 与文档/REST 共用同一端口，支持 TLS 自动终结
+                app.UseWebSockets();
 
                 var fsOptions = new FileServerOptions
                 {
@@ -73,6 +93,7 @@ namespace DuoAssistant.Services
 
                 MapApi(app, docs);
                 _app = app;
+                Tools.Logger("WebSocket 端点已挂载: " + WebSocketEndpoint);
                 await app.StartAsync().ConfigureAwait(false);
                 IsRunning = true;
                 LastError = null;
@@ -89,8 +110,28 @@ namespace DuoAssistant.Services
         /// <summary>命令返回的是已经序列化好的 Result JSON，直接透传避免二次序列化。</summary>
         private static IResult Json(string json) => Results.Content(json, "application/json; charset=utf-8");
 
-        private static void MapApi(WebApplication app, string docs)
+        /// <summary>向所有 WebSocket 连接广播消息（队列变更通知等）。</summary>
+        public void Broadcast(string payload) => _ws.Broadcast(payload);
+
+        private void MapApi(WebApplication app, string docs)
         {
+            // WebSocket 升级端点（与 HTTP 同端口）
+            app.Map("/ws", async (HttpContext ctx) => await _ws.Handle(ctx));
+
+            // 轻量探活：供负载均衡器 / 监控脚本秒级判断服务是否存活
+            app.MapGet("/health", () => Results.Json(new
+            {
+                status = "ok",
+                app = Brand.NameEn,
+                version = Brand.Version,
+                uptimeSeconds = (long)(DateTime.Now - PrintQueueService.Instance.StartedAt).TotalSeconds,
+                web = Program.WebRunning,
+                ws = Program.WsRunning,
+                wsConnections = Program.WebWsConnections,
+                aoOnline = AoClientService.Instance.Online,
+                queue = PrintQueueService.Instance.Summary()
+            }));
+
             app.MapGet("/api/status", () => Json(CommandDispatcher.Execute("GetStatus", "{}")));
             app.MapGet("/api/commands", () => Results.Json(new
             {
@@ -134,6 +175,40 @@ namespace DuoAssistant.Services
                 string body;
                 using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
                 return Json(CommandDispatcher.Execute("QueuePrint", body));
+            });
+
+            // 便捷端点：生成条码/二维码并直接打印
+            app.MapPost("/api/barcode", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("PrintBarcode", body));
+            });
+
+            // 虚拟打印：输出 PDF / XPS 文件
+            app.MapPost("/api/print/topdf", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("PrintToPdf", body));
+            });
+            app.MapPost("/api/print/toxps", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("PrintToXps", body));
+            });
+
+            // ESC/POS 热敏小票原始打印
+            app.MapPost("/api/escpos", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("PrintEscPos", body));
             });
 
             app.MapPost("/api/clean/scan", async (HttpContext ctx) =>

@@ -1,4 +1,8 @@
-﻿using System;
+﻿// Copyright (c) 2026 Alaikis Limited
+// Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
+// You can use this software according to the terms and conditions of the Mulan PSL v2.
+// You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+using System;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
@@ -21,7 +25,7 @@ namespace DuoAssistant.Views.Pages
         public QueueTab()
         {
             Dock = DockStyle.Fill;
-            BackColor = SystemColors.Window;
+            BackColor = Theme.Card;
             _list.CheckBoxes = false;
             _list.Columns[0].Width = 210;
             _list.Columns[1].Width = 200;
@@ -34,14 +38,14 @@ namespace DuoAssistant.Views.Pages
 
             var bar = Ui.Toolbar(
                 Ui.Button(L10n.T("刷新"), (s, e) => RefreshData(), 80),
-                Ui.Button(L10n.T("重试选中"), (s, e) => Act("RetryJob"), 100),
+                Ui.Button(L10n.T("重试选中"), (s, e) => Act("RetryJob"), 100, primary: true),
                 Ui.Button(L10n.T("取消选中"), (s, e) => Act("CancelJob"), 100),
                 Ui.Button(L10n.T("删除选中"), (s, e) => RemoveSelected(), 100),
                 Ui.Button(L10n.T("清空已完成"), (s, e) => Clear(true), 110),
                 Ui.Button(L10n.T("清空全部"), (s, e) => Clear(false), 100),
                 _summary);
 
-            var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
+            var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12) };
             root.Controls.Add(_list);
             root.Controls.Add(bar);
             Controls.Add(root);
@@ -103,7 +107,7 @@ namespace DuoAssistant.Views.Pages
                 case JobStatus.Failed: return Color.FromArgb(185, 28, 28);
                 case JobStatus.Printing: return Color.FromArgb(29, 78, 216);
                 case JobStatus.Cancelled: return Color.Gray;
-                default: return SystemColors.WindowText;
+                default: return Theme.Text;
             }
         }
 
