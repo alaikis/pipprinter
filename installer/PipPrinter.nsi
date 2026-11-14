@@ -97,6 +97,9 @@ Section "PipPrinter (required)" SEC_CORE
 
   SetOutPath "$INSTDIR"
   File /r "${PUBLISH_DIR}${SEP}*.*"
+  ; 发布基线：self-contained 单文件（dotnet publish --self-contained true -p:PublishSingleFile=true），
+  ; 用户无需预装 .NET 运行时。若某版本发布物改为 framework-dependent，安装器必须加装
+  ; .NET 10 Desktop Runtime 依赖或安装前检测并提示，禁止直接发布（用户 2026-11-15 确认）。
 
   ; 恢复用户配置
   ${If} $R0 == "1"
