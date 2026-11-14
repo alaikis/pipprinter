@@ -31,7 +31,12 @@ namespace DuoAssistant.Services
     public sealed class XpsWriterService
     {
         private const double Dpi = 96.0;                 // WPF 逻辑单位 = 1/96 英寸
-        private const double MarginInch = 0.5;           // 0.5 英寸边距
+        // 边距由 PrintJob.Margin（1/100 英寸，默认 50 = 0.5 英寸）统一提供
+        private static double MarginUnits(PrintJob job)
+        {
+            var m = job == null ? 50 : Math.Max(0, Math.Min(500, job.Margin));
+            return m / 100.0 * Dpi;
+        }
         private const int TimeoutSeconds = 120;
 
         // ---------------------------------------------------------------- 图片
@@ -64,7 +69,7 @@ namespace DuoAssistant.Services
             var landscape = IsLandscape(job);
             double pageW = landscape ? page.Height : page.Width;
             double pageH = landscape ? page.Width : page.Height;
-            double margin = MarginInch * Dpi;
+            double margin = MarginUnits(job);
             var bounds = new Rect(margin, margin, pageW - margin * 2, pageH - margin * 2);
 
             double scale = ComputeScale(bitmap.PixelWidth, bitmap.PixelHeight, bounds.Width, bounds.Height, job.Fit);
@@ -120,7 +125,7 @@ namespace DuoAssistant.Services
             var landscape = IsLandscape(job);
             double pageW = landscape ? page.Height : page.Width;
             double pageH = landscape ? page.Width : page.Height;
-            double margin = MarginInch * Dpi;
+            double margin = MarginUnits(job);
             double textWidth = pageW - margin * 2;
 
             var bodyFont = new FontFamily("Consolas");

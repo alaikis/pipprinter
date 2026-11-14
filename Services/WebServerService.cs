@@ -164,8 +164,10 @@ namespace DuoAssistant.Services
                 if (!CommandDispatcher.IsValidJson(body))
                     return Results.Json(new { code = 400, error = "请求不是合法 JSON" });
                 var cmd = JObject.Parse(body)["cmd"]?.ToString();
-                if (string.IsNullOrWhiteSpace(cmd))
-                    return Results.Json(new { code = 400, error = "缺少 cmd 字段" });
+                // 不指定 cmd 时默认 auto：自动识别打印内容与文件形式
+                if (string.IsNullOrWhiteSpace(cmd)) cmd = "AutoPrint";
+                else if (cmd.Equals("Auto", StringComparison.OrdinalIgnoreCase) ||
+                         cmd.Equals("auto", StringComparison.OrdinalIgnoreCase)) cmd = "AutoPrint";
                 return Json(CommandDispatcher.Execute(cmd, body));
             });
 

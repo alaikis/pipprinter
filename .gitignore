@@ -16,3 +16,5 @@ installer/*.exe
 
 # SumatraPDF 运行期设置（含最近文件列表等本机状态）
 pdfreader/SumatraPDF-settings.txt
+/cloud/
+/site/

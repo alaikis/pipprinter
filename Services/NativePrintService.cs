@@ -322,14 +322,37 @@ namespace DuoAssistant.Services
                     catch { /* 部分打印机不支持份数 */ }
                 }
 
+                try { doc.PrinterSettings.Collate = job.Collate; }
+                catch { /* 部分打印机不支持逐份设置 */ }
+
+                switch ((job.Duplex ?? "simplex").Trim().ToLowerInvariant())
+                {
+                    case "duplex": case "duplexlong": case "long": case "vertical":
+                        try { doc.PrinterSettings.Duplex = System.Drawing.Printing.Duplex.Vertical; } catch { }
+                        break;
+                    case "duplexshort": case "short": case "horizontal":
+                        try { doc.PrinterSettings.Duplex = System.Drawing.Printing.Duplex.Horizontal; } catch { }
+                        break;
+                    default:
+                        try { doc.PrinterSettings.Duplex = System.Drawing.Printing.Duplex.Simplex; } catch { }
+                        break;
+                }
+
+                if (job.Color.HasValue)
+                {
+                    try { doc.DefaultPageSettings.Color = job.Color.Value; }
+                    catch { /* 黑白打印机不支持彩色 */ }
+                }
+
                 if (!string.IsNullOrWhiteSpace(job.PaperKind))
                     ApplyPaper(doc, job.PaperKind);
 
                 doc.DefaultPageSettings.Landscape =
                     string.Equals(job.Scale, "landscape", StringComparison.OrdinalIgnoreCase);
 
-                // 0.5 英寸边距（百分之一英寸单位）
-                doc.DefaultPageSettings.Margins = new Margins(50, 50, 50, 50);
+                // 边距单位为 1/100 英寸，默认 50（0.5 英寸）
+                var m = Math.Max(0, Math.Min(500, job.Margin));
+                doc.DefaultPageSettings.Margins = new Margins(m, m, m, m);
 
                 if (!string.IsNullOrEmpty(outPath))
                 {

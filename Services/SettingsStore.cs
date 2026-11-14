@@ -106,6 +106,14 @@ namespace DuoAssistant.Services
                         if (loaded.CleanMinSizeMB < 0) loaded.CleanMinSizeMB = 1;
                         if (loaded.AllowedCommands == null || loaded.AllowedCommands.Count == 0)
                             loaded.AllowedCommands = Defaults().AllowedCommands;
+                        else
+                        {
+                            // 升级兼容：只补齐官方新增的只读 / 默认命令，用户已有配置其余项保持不变。
+                            foreach (var added in new[] { "AutoPrint", "CheckPrinterDriver" })
+                                if (!loaded.AllowedCommands.Exists(x =>
+                                        string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
+                                    loaded.AllowedCommands.Add(added);
+                        }
                         if (loaded.CleanWhitelist == null) loaded.CleanWhitelist = Defaults().CleanWhitelist;
                         if (string.IsNullOrWhiteSpace(loaded.Language)) loaded.Language = "auto";
                         return loaded;
@@ -125,9 +133,9 @@ namespace DuoAssistant.Services
             {
                 AllowedCommands = new List<string>
                 {
-                    "PrintPdf", "PrintFile", "PrintBarcode", "PrintToPdf", "PrintToXps", "PrintEscPos",
+                    "AutoPrint", "PrintPdf", "PrintFile", "PrintBarcode", "PrintToPdf", "PrintToXps", "PrintEscPos",
                     "TemplatePrint", "QueuePrint", "GetQueue",
-                    "RetryJob", "CancelJob", "ClearQueue", "GetPrinterList", "GetPrinterDetail",
+                    "RetryJob", "CancelJob", "ClearQueue", "GetPrinterList", "GetPrinterDetail", "CheckPrinterDriver",
                     "SetDefaultPrinter", "PrintTestPage", "GetPdfDriverConfig", "SetPdfPrintDriverConfig",
                     "ScanDisk", "CleanDisk", "CleanAppTemp", "GetDiskInfo", "GetSettings", "SaveSettings", "GetStatus",
                     "GetMachineFingerprint", "CheckUpdate", "ApplyUpdate"

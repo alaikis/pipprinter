@@ -37,8 +37,8 @@ namespace DuoAssistant.Services
             try
             {
                 var dt = ParseObject(args);
-                var label = Str(dt, "label") ?? Str(dt, "url") ?? Str(dt, "path");
-                if (string.IsNullOrWhiteSpace(label)) throw new ArgumentException("缺少 label 字段");
+                var label = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(label)) throw new ArgumentException("缺少 target 字段");
 
                 var job = BuildJob(dt, label);
                 var outcome = _extended.Print(job);
@@ -48,7 +48,7 @@ namespace DuoAssistant.Services
                 {
                     label,
                     printer = job.Printer,
-                    engine = outcome.Engine,
+                    engine = EngineCategory(outcome.Engine),
                     message = outcome.Message
                 }, cmd: "Print", msg: "print successful!");
             }
@@ -88,7 +88,7 @@ namespace DuoAssistant.Services
                     return Result.error(outcome.Message, cmd: "PrintBarcode", data: new { detail = outcome.Detail, image = png });
                 return Result.success(data: new
                 {
-                    value, image = png, printer, engine = outcome.Engine,
+                    value, image = png, printer, engine = EngineCategory(outcome.Engine),
                     message = outcome.Message
                 }, cmd: "PrintBarcode", msg: outcome.Message);
             }
@@ -104,15 +104,15 @@ namespace DuoAssistant.Services
             try
             {
                 var dt = ParseObject(args);
-                var target = Str(dt, "path") ?? Str(dt, "label") ?? Str(dt, "url") ?? Str(dt, "file");
-                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 path 字段");
+                var target = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 target 字段");
                 var job = BuildJob(dt, target);
                 var outcome = _extended.Print(job);
                 if (!outcome.Ok)
                     return Result.error(outcome.Message, cmd: "PrintFile", data: new { detail = outcome.Detail });
                 return Result.success(data: new
                 {
-                    path = target, printer = job.Printer, engine = outcome.Engine,
+                    path = target, printer = job.Printer, engine = EngineCategory(outcome.Engine),
                     message = outcome.Message, supportedTypes = PrintFileTypes.All
                 }, cmd: "PrintFile", msg: outcome.Message);
             }
@@ -120,6 +120,151 @@ namespace DuoAssistant.Services
             {
                 return Result.error(ex.Message, cmd: "PrintFile");
             }
+        }
+
+
+        /// <summary>
+        /// 自动打印：不指定 cmd 时的默认行为（也可显式写 cmd="Auto" / "AutoPrint"）。
+        /// 依据请求中真实出现的内容识别来源（内联内容 / 本地文件 / 网络 URL）与文件形式，
+        /// 再交给对应的真实打印命令；返回 data.auto 附识别结果，便于调用方核对。
+        /// 不猜测条码、ESC/POS 等专用命令，避免把普通文本误判成小票指令。
+        /// </summary>
+        public string AutoPrint(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+
+                // 模板：显式 html / templateUrl 字段 → 模板打印
+                if (!string.IsNullOrWhiteSpace(Str(dt, "html")) || !string.IsNullOrWhiteSpace(Str(dt, "templateUrl")))
+                    return Decorate(TemplatePrint(args), "TemplatePrint", "template", "请求含 html / templateUrl 模板字段");
+
+                // 内联内容：content / base64 / data URI → 落临时文件后按内容识别
+                var inline = Str(dt, "content") ?? Str(dt, "base64");
+                if (!string.IsNullOrWhiteSpace(inline))
+                {
+                    var inlineIsBase64 = !string.IsNullOrWhiteSpace(Str(dt, "base64")) ||
+                        string.Equals(Str(dt, "encoding"), "base64", StringComparison.OrdinalIgnoreCase);
+                    var inlinePath = SaveInlineContent(dt, inline, inlineIsBase64);
+                    var ext = Path.GetExtension(inlinePath);
+                    return Decorate(PrintFile(WithTarget(dt, inlinePath)), "PrintFile",
+                        PrintFileTypes.CategoryOf(ext),
+                        "请求含内联内容，按文件名后缀 / 文件字节特征识别为 " + ext + " 并自动处理");
+                }
+
+                // 文件 / URL：交给 PrintFile，由下载层按文件名后缀 / 文件字节特征 / 响应类型识别
+                var target = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(target))
+                    return Result.error("无法识别打印内容：请提供 target（本机路径或 http(s) 地址），或 content / base64 内联内容",
+                        400, "Auto");
+
+                var isUrl = ExtendedPrintService.NormalizeUrlSafe(target) != null;
+                var probe = isUrl
+                    ? new Uri(ExtendedPrintService.NormalizeUrl(target)).AbsolutePath
+                    : target;
+                var category = PrintFileTypes.CategoryOf(Path.GetExtension(probe));
+                return Decorate(PrintFile(WithTarget(dt, target)), "PrintFile", category,
+                    isUrl ? "识别为网络文件，下载后按文件形式自动处理"
+                          : "识别为本地文件，按文件形式自动处理");
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, 400, "Auto");
+            }
+        }
+
+        /// <summary>把识别结果写进命令返回，不改变原有 code / data 结构。</summary>
+        private static string Decorate(string result, string resolved, string category, string detectedBy)
+        {
+            try
+            {
+                var o = JObject.Parse(result);
+                var d = o["data"] as JObject ?? new JObject();
+                d["auto"] = new JObject
+                {
+                    ["resolved"] = resolved,
+                    ["category"] = category,
+                    ["detectedBy"] = detectedBy
+                };
+                o["data"] = d;
+                return o.ToString(Formatting.None);
+            }
+            catch { return result; }
+        }
+
+        /// <summary>
+        /// 统一解析打印目标：对外主推 target，历史字段降级为兼容别名。
+        /// 所有打印命令共用，保证「只传一个 target」在显式命令与 auto 下都成立。
+        /// </summary>
+        private static string ResolveTarget(JObject dt) =>
+            Str(dt, "target") ?? Str(dt, "path") ?? Str(dt, "label")
+            ?? Str(dt, "url") ?? Str(dt, "file");
+
+        /// <summary>把目标统一写回 target，供下游命令 / BuildJob 使用；历史别名与内联字段一并清除。</summary>
+        private static string WithTarget(JObject dt, string target)
+        {
+            var copy = (JObject)dt.DeepClone();
+            copy.Remove("path"); copy.Remove("url"); copy.Remove("label"); copy.Remove("file");
+            copy.Remove("content"); copy.Remove("base64"); copy.Remove("encoding");
+            copy.Remove("contentType"); copy.Remove("filename"); copy.Remove("fileName");
+            copy["target"] = target;
+            return copy.ToString(Formatting.None);
+        }
+
+        /// <summary>
+        /// 把内联内容（纯文本 / base64 / data URI）写成临时文件，返回路径。
+        /// 类型只依据「文件名后缀」与「文件字节特征」判定，不采信单独传入的 contentType 字段。
+        /// base64 内容两处都无法识别、又没给带扩展名的 filename 时直接报错，
+        /// 不落 .bin、不交给系统关联程序碰运气。
+        /// 非 base64 的纯文本按 .txt 处理（编码事实，不是猜测）；
+        /// data URI 头部自带的媒体类型属于内容元信息，可作为最后一级依据。
+        /// </summary>
+        private static string SaveInlineContent(JObject dt, string raw, bool isBase64)
+        {
+            string declared = null;
+            if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var comma = raw.IndexOf(',');
+                if (comma <= 5) throw new ArgumentException("data URI 格式不正确");
+                var head = raw.Substring(5, comma - 5);
+                isBase64 = head.IndexOf("base64", StringComparison.OrdinalIgnoreCase) >= 0;
+                var semi = head.IndexOf(';');
+                declared = semi > 0 ? head.Substring(0, semi) : head;
+                raw = raw.Substring(comma + 1);
+            }
+
+            byte[] bytes;
+            if (isBase64)
+            {
+                try { bytes = Convert.FromBase64String(raw); }
+                catch { throw new ArgumentException("base64 内容无法解码"); }
+            }
+            else bytes = System.Text.Encoding.UTF8.GetBytes(raw);
+
+            var fn = Str(dt, "filename") ?? Str(dt, "fileName");
+            var fromName = string.IsNullOrWhiteSpace(fn) ? "" : Path.GetExtension(fn).ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(fromName) && Array.IndexOf(PrintFileTypes.All, fromName) < 0)
+                fromName = "";
+
+            var magic = ExtendedPrintService.GuessExtensionFromBytes(bytes);
+            var fromContent = magic == ".bin" ? "" : magic;
+
+            var ext = !string.IsNullOrWhiteSpace(fromName) ? fromName
+                    : !string.IsNullOrWhiteSpace(fromContent) ? fromContent
+                    : "";
+            if (string.IsNullOrWhiteSpace(ext) && !string.IsNullOrWhiteSpace(declared))
+                ext = ExtendedPrintService.ExtensionFromContentType(declared);
+            if (!string.IsNullOrWhiteSpace(ext) && Array.IndexOf(PrintFileTypes.All, ext) < 0) ext = "";
+
+            if (string.IsNullOrWhiteSpace(ext) && !isBase64) ext = ".txt";
+            if (string.IsNullOrWhiteSpace(ext))
+                throw new ArgumentException(
+                    "无法识别内联内容的文件类型：内容中不含可识别的文件特征，请提供 filename（含扩展名，如 label.pdf / label.png / label.docx）");
+
+            var path = Path.Combine(SettingsStore.Instance.TempDir,
+                "auto_" + Guid.NewGuid().ToString("N") + ext);
+            File.WriteAllBytes(path, bytes);
+            return path;
         }
 
         // ------------------------------------------------ 虚拟打印（输出 PDF / XPS 文件）
@@ -137,8 +282,8 @@ namespace DuoAssistant.Services
             try
             {
                 var dt = ParseObject(args);
-                var target = Str(dt, "path") ?? Str(dt, "label") ?? Str(dt, "url") ?? Str(dt, "file");
-                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 path 字段");
+                var target = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 target 字段");
 
                 var outPath = Str(dt, "output") ?? Str(dt, "outPath");
                 if (string.IsNullOrWhiteSpace(outPath))
@@ -152,7 +297,7 @@ namespace DuoAssistant.Services
                 return Result.success(data: new
                 {
                     output = Path.GetFullPath(outPath),
-                    engine = outcome.Engine,
+                    engine = EngineCategory(outcome.Engine),
                     message = outcome.Message
                 }, cmd: cmd, msg: outcome.Message);
             }
@@ -167,8 +312,8 @@ namespace DuoAssistant.Services
             try
             {
                 var dt = ParseObject(args);
-                var target = Str(dt, "path") ?? Str(dt, "label") ?? Str(dt, "url") ?? Str(dt, "file");
-                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 path 字段");
+                var target = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 target 字段");
 
                 var outPath = Str(dt, "output") ?? Str(dt, "outPath");
                 if (string.IsNullOrWhiteSpace(outPath))
@@ -182,7 +327,7 @@ namespace DuoAssistant.Services
                 return Result.success(data: new
                 {
                     output = Path.GetFullPath(outPath),
-                    engine = outcome.Engine,
+                    engine = EngineCategory(outcome.Engine),
                     message = outcome.Message
                 }, cmd: cmd, msg: outcome.Message);
             }
@@ -250,7 +395,7 @@ namespace DuoAssistant.Services
                 {
                     printer,
                     bytes = data.Length,
-                    engine = outcome.Engine,
+                    engine = EngineCategory(outcome.Engine),
                     message = outcome.Message,
                     dump = new EscPosService().SaveToFile(data)
                 }, cmd: cmd, msg: outcome.Message);
@@ -262,7 +407,10 @@ namespace DuoAssistant.Services
         }
 
         /// <summary>
-        /// 模板打印：template 为内联文本或模板文件路径，data 为 {{key}} 占位符值。
+        /// 模板打印（模板+数据模式）：
+        ///   template —— 内联 HTML 文本、本地模板文件路径、或模板 URL（CDN/S3 直链）；
+        ///   data     —— {{key}} 占位符 → 值 映射，值自动做 HTML 转义（防破版/注入）；
+        ///   paperKind/copies/fit/scale/printer —— 打印参数（可选）。
         /// 渲染后入队打印。
         /// </summary>
         public string TemplatePrint(string args)
@@ -275,11 +423,23 @@ namespace DuoAssistant.Services
 
                 string rendered;
                 string path;
-                var isHtml = template.IndexOf("<", StringComparison.Ordinal) >= 0 &&
-                             template.IndexOf(">", StringComparison.Ordinal) >= 0;
+                bool isHtml;
+                string templateOrigin = "inline";
 
-                if (File.Exists(template))
+                var templateUrl = ExtendedPrintService.NormalizeUrlSafe(template);
+                if (templateUrl != null)
                 {
+                    // ① template 是 URL（CDN/S3 直链模板）：下载到 temp 再渲染
+                    templateOrigin = "url";
+                    rendered = DownloadTemplateToText(templateUrl);
+                    path = Path.Combine(SettingsStore.Instance.TempDir,
+                        Guid.NewGuid().ToString("N") + ".html");
+                    isHtml = true;
+                }
+                else if (File.Exists(template))
+                {
+                    // ② 本地模板文件路径
+                    templateOrigin = "file";
                     path = template;
                     rendered = File.ReadAllText(path);
                     isHtml = Path.GetExtension(path).Equals(".html", StringComparison.OrdinalIgnoreCase) ||
@@ -287,27 +447,68 @@ namespace DuoAssistant.Services
                 }
                 else
                 {
+                    // ③ 内联 HTML/文本
+                    templateOrigin = "inline";
                     rendered = template;
+                    isHtml = rendered.IndexOf("<", StringComparison.Ordinal) >= 0 &&
+                             rendered.IndexOf(">", StringComparison.Ordinal) >= 0;
                     path = Path.Combine(SettingsStore.Instance.TempDir,
                         Guid.NewGuid().ToString("N") + (isHtml ? ".html" : ".txt"));
                 }
 
+                // 参数替换：值做 HTML 转义，避免订单数据里的 < & " 破坏版面或注入
+                int replaced = 0;
                 if (dt["data"] is JObject data)
                 {
                     foreach (var kv in data.Properties())
-                        rendered = rendered.Replace("{{" + kv.Name + "}}", kv.Value.ToString());
+                    {
+                        var value = HtmlEncodeTemplateValue(kv.Value);
+                        if (rendered.Contains("{{" + kv.Name + "}}", StringComparison.Ordinal))
+                        {
+                            rendered = rendered.Replace("{{" + kv.Name + "}}", value);
+                            replaced++;
+                        }
+                    }
                 }
                 if (!File.Exists(path)) File.WriteAllText(path, rendered);
 
+                Tools.Logger(string.Format("模板打印 {0}: 来源 {1}, 替换 {2}/{3} 个占位符",
+                    dt["jobId"]?.ToString() ?? "-", templateOrigin, replaced,
+                    dt["data"] is JObject d ? d.Count : 0));
+
                 var job = BuildJob(dt, path);
                 var queued = PrintQueueService.Instance.Enqueue(job);
-                return Result.success(data: new { jobId = queued.Id, renderedPath = path, isHtml },
+                return Result.success(data: new
+                {
+                    jobId = queued.Id,
+                    renderedPath = path,
+                    isHtml,
+                    templateOrigin,
+                    replaced
+                },
                     cmd: "TemplatePrint", msg: "模板已渲染并入队");
             }
             catch (Exception ex)
             {
                 return Result.error(ex.Message, cmd: "TemplatePrint");
             }
+        }
+
+        /// <summary>把 URL 模板下载为本地文本（复用 HttpClient 基建），返回模板内容。</summary>
+        private static string DownloadTemplateToText(string url)
+        {
+            var bytes = ExtendedPrintService.DownloadBytes(url);
+            return System.Text.Encoding.UTF8.GetString(bytes);
+        }
+
+        /// <summary>把 JSON 值转为 HTML 安全文本（对象/数组序列化后转义，标量直接转义）。</summary>
+        private static string HtmlEncodeTemplateValue(JToken value)
+        {
+            var raw = value == null || value.Type == JTokenType.Null ? ""
+                : value.Type == JTokenType.Object || value.Type == JTokenType.Array
+                    ? value.ToString()
+                    : value.ToString();
+            return System.Net.WebUtility.HtmlEncode(raw);
         }
 
         // ---------------------------------------------------------------- 队列
@@ -317,8 +518,8 @@ namespace DuoAssistant.Services
             try
             {
                 var dt = ParseObject(args);
-                var target = Str(dt, "path") ?? Str(dt, "label") ?? Str(dt, "url") ?? Str(dt, "file");
-                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 path 字段");
+                var target = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 target 字段");
                 var job = BuildJob(dt, target);
                 var queued = PrintQueueService.Instance.Enqueue(job);
                 return Result.success(data: new { jobId = queued.Id, job = queued },
@@ -381,6 +582,44 @@ namespace DuoAssistant.Services
 
         public string GetPrinterDetail(string args) =>
             Result.success(data: _printers.GetInstalled(), cmd: "GetPrinterDetail");
+
+        /// <summary>
+        /// 只读：检查本机打印机与驱动是否可用。
+        /// 只报告状态，不下载、不安装、不修改任何驱动；needsDriver 以 PrinterSettings.IsValid 为真实依据。
+        /// </summary>
+        public string CheckPrinterDriver(string args)
+        {
+            try
+            {
+                var items = _printers.GetInstalled().Select(p => new
+                {
+                    name = p.Name,
+                    driver = p.Driver,
+                    port = p.Port,
+                    isDefault = p.IsDefault,
+                    isValid = p.IsValid,
+                    status = p.Status,
+                    paperSizes = p.PaperSizes,
+                    needsDriver = !p.IsValid
+                }).ToList();
+                return Result.success(data: new
+                {
+                    os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+                    arch = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+                        .ToString().ToLowerInvariant(),
+                    hasPrinter = items.Count > 0,
+                    printerCount = items.Count,
+                    defaultPrinter = _printers.GetDefault(),
+                    needsAttention = items.Count == 0 || items.Any(x => x.needsDriver),
+                    printers = items,
+                    guidance = "打印机驱动由管理员通过打印机厂商官方渠道安装；客户端不自动下载或安装驱动。"
+                }, cmd: "CheckPrinterDriver");
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: "CheckPrinterDriver");
+            }
+        }
 
         public string SetDefaultPrinter(string args)
         {
@@ -670,6 +909,26 @@ namespace DuoAssistant.Services
             return v == null || v.Type == JTokenType.Null ? fallback : v.Value<bool>();
         }
 
+        /// <summary>
+        /// 把内部实现标识收敛为文件类别，对外只暴露 data.engine 的类别值。
+        /// 内部日志与诊断仍保留完整标识，便于排障；外部不承诺具体实现方式。
+        /// </summary>
+        private static string EngineCategory(string engine)
+        {
+            var e = engine ?? "";
+            if (e.StartsWith("LibreOffice", StringComparison.OrdinalIgnoreCase)) return "office";
+            if (e.StartsWith("OFD", StringComparison.OrdinalIgnoreCase)) return "ofd";
+            if (e.StartsWith("XPS", StringComparison.OrdinalIgnoreCase)) return "xps";
+            if (e.StartsWith("SVG", StringComparison.OrdinalIgnoreCase)) return "svg";
+            if (e.StartsWith("ESC/POS", StringComparison.OrdinalIgnoreCase)) return "escpos";
+            if (e.StartsWith("GDI+Text", StringComparison.OrdinalIgnoreCase)) return "text";
+            if (e.StartsWith("GDI+", StringComparison.OrdinalIgnoreCase)) return "image";
+            if (e.IndexOf("SumatraPDF", StringComparison.OrdinalIgnoreCase) >= 0) return "pdf";
+            if (e.StartsWith("ShellVerb", StringComparison.OrdinalIgnoreCase)) return "shell";
+            if (e.StartsWith("Copy", StringComparison.OrdinalIgnoreCase)) return "file";
+            return string.IsNullOrWhiteSpace(e) ? "unknown" : e.ToLowerInvariant();
+        }
+
         private static PrintJob BuildJob(JObject dt, string target)
         {
             var isHttp = ExtendedPrintService.NormalizeUrlSafe(target) != null;
@@ -680,10 +939,29 @@ namespace DuoAssistant.Services
                 Printer = Str(dt, "printer") ?? SettingsStore.Instance.Current.DefaultPrinter ?? "",
                 Copies = Math.Max(1, Int(dt, "copies", 1)),
                 Fit = Str(dt, "fit") ?? "fit",
-                Scale = Str(dt, "scale") ?? "portrait",
+                Scale = Str(dt, "scale") ?? Str(dt, "orientation") ?? "portrait",
                 PaperKind = Str(dt, "paperKind") ?? "",
-                Pages = Str(dt, "printPages") ?? Str(dt, "pages") ?? "1-"
+                Pages = Str(dt, "printPages") ?? Str(dt, "pages") ?? "1-",
+                Duplex = Str(dt, "duplex") ?? "simplex",
+                Color = TriBool(dt, "color"),
+                Collate = Bool(dt, "collate", true),
+                Margin = Math.Max(0, Math.Min(500, Int(dt, "margin", 50))),
+                Bin = Str(dt, "bin") ?? "",
+                Dpi = Math.Max(0, Int(dt, "dpi", 0)),
+                PageOrder = Str(dt, "pageOrder") ?? Str(dt, "parity") ?? ""
             };
+        }
+
+        /// <summary>三态布尔：缺省 / auto 表示跟随打印机，不强行设置。</summary>
+        private static bool? TriBool(JObject o, string key)
+        {
+            var v = o?[key];
+            if (v == null || v.Type == JTokenType.Null) return null;
+            var s = v.ToString().Trim().ToLowerInvariant();
+            if (s == "" || s == "auto" || s == "default") return null;
+            if (s == "true" || s == "1" || s == "color" || s == "彩色") return true;
+            if (s == "false" || s == "0" || s == "monochrome" || s == "mono" || s == "黑白") return false;
+            return null;
         }
     }
 }
