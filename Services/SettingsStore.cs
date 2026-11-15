@@ -109,7 +109,8 @@ namespace DuoAssistant.Services
                         else
                         {
                             // 升级兼容：只补齐官方新增的只读 / 默认命令，用户已有配置其余项保持不变。
-                            foreach (var added in new[] { "AutoPrint", "CheckPrinterDriver" })
+                            foreach (var added in new[] { "AutoPrint", "CheckPrinterDriver",
+                                                          "MatchPrinter", "SetPrinterPreference", "GetPrinterPreferences" })
                                 if (!loaded.AllowedCommands.Exists(x =>
                                         string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
                                     loaded.AllowedCommands.Add(added);
@@ -137,6 +138,7 @@ namespace DuoAssistant.Services
                     "TemplatePrint", "QueuePrint", "GetQueue",
                     "RetryJob", "CancelJob", "ClearQueue", "GetPrinterList", "GetPrinterDetail", "CheckPrinterDriver",
                     "SetDefaultPrinter", "PrintTestPage", "GetPdfDriverConfig", "SetPdfPrintDriverConfig",
+                    "MatchPrinter", "SetPrinterPreference", "GetPrinterPreferences",
                     "ScanDisk", "CleanDisk", "CleanAppTemp", "GetDiskInfo", "GetSettings", "SaveSettings", "GetStatus",
                     "GetMachineFingerprint", "CheckUpdate", "ApplyUpdate"
                 },
