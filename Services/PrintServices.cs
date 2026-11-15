@@ -641,6 +641,109 @@ namespace DuoAssistant.Services
                 : Result.error("测试页打印失败，请检查打印机是否可用", cmd: "PrintTestPage");
         }
 
+        // ------------------------------------------------ 打印机匹配
+
+        /// <summary>
+        /// 三层打印机智能匹配（L1 文件类别 / L2 纸宽 / L3 历史偏好）。
+        /// 参数：
+        ///   target       文件路径或 URL（用扩展名识别类别，必填）
+        ///   paperWidthMm 期望纸宽毫米（0=不过滤）
+        ///   prefer       可选，强制指定偏好打印机名
+        /// 返回候选列表（已按分数排序）+ best（首选）；无匹配时 best 为空。
+        /// </summary>
+        public string MatchPrinter(string args)
+        {
+            const string cmd = "MatchPrinter";
+            try
+            {
+                var dt = ParseObject(args);
+                var target = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(target))
+                    return Result.error("缺少 target 字段（文件路径或 URL）", 400, cmd);
+                var paperWidthMm = Math.Max(0, Int(dt, "paperWidthMm", 0));
+                var prefer = Str(dt, "prefer");
+                var category = PrinterMatcherService.Match(target, paperWidthMm, prefer);
+                var best = category.Count > 0 ? category[0] : null;
+                return Result.success(data: new
+                {
+                    target,
+                    category = PrintFileTypes.CategoryOf(
+                        ExtendedPrintService.NormalizeUrlSafe(target) != null
+                            ? new Uri(ExtendedPrintService.NormalizeUrl(target)).AbsolutePath
+                            : Path.GetExtension(target)),
+                    paperWidthMm,
+                    prefer,
+                    candidates = category,
+                    best = best != null
+                        ? new { printer = best.Printer, driver = best.Driver, reason = best.Reason,
+                              isDefault = best.IsDefault, isPreferred = best.IsPreferred }
+                        : null,
+                    matched = category.Count,
+                    hint = category.Count == 0
+                        ? "本机没有匹配的可用打印机，请确认驱动已安装"
+                        : category.Count == 1
+                            ? "已自动匹配唯一候选"
+                            : "多台候选，best 为首选；调用方可让前端展示候选列表供用户选择"
+                }, cmd: cmd);
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        /// <summary>
+        /// 记录某文件类别的打印机偏好（用户手动选择后调用）。
+        /// 参数：category（pdf/office/image/text/html/svg/xps/ofd/escpos）、printer（打印机名）。
+        /// 偏好持久化到 data/preferences.json，下次匹配时自动优先该打印机。
+        /// </summary>
+        public string SetPrinterPreference(string args)
+        {
+            const string cmd = "SetPrinterPreference";
+            try
+            {
+                var dt = ParseObject(args);
+                var category = Str(dt, "category");
+                var printer = Str(dt, "printer");
+                if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(printer))
+                    return Result.error("缺少 category 或 printer 字段", 400, cmd);
+                PrinterMatcherService.RecordPreference(category, printer);
+                return Result.success(data: new { category, printer, savedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") },
+                    cmd: cmd, msg: "打印机偏好已保存");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        /// <summary>
+        /// 只读：列出当前已记录的打印机偏好（各文件类别 → 首选打印机）。
+        /// </summary>
+        public string GetPrinterPreferences(string args)
+        {
+            const string cmd = "GetPrinterPreferences";
+            try
+            {
+                var prefs = LoadAllPreferences();
+                return Result.success(data: prefs, cmd: cmd);
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        /// <summary>从 data/preferences.json 读取全部偏好（供 GetPrinterPreferences 使用）。</summary>
+        private static Dictionary<string, string> LoadAllPreferences()
+        {
+            var path = Path.Combine(SettingsStore.Instance.DataDir, "preferences.json");
+            try
+            {
+                if (!System.IO.File.Exists(path)) return new Dictionary<string, string>();
+                var json = System.IO.File.ReadAllText(path);
+                var obj = Newtonsoft.Json.Linq.JObject.Parse(json);
+                var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (obj["PreferredPrinterByCategory"] is Newtonsoft.Json.Linq.JObject jo)
+                {
+                    foreach (var kv in jo.Properties()) map[kv.Name] = kv.Value.ToString();
+                }
+                return map;
+            }
+            catch { return new Dictionary<string, string>(); }
+        }
+
         // ------------------------------------------------------ PDF 驱动配置
 
         public string GetPdfDriverConfig(string args)
