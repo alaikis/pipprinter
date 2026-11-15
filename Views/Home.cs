@@ -64,18 +64,49 @@ namespace DuoAssistant
             Hide();
         }
 
-        /// <summary>加载图标：优先 Resource 目录下的 ico，缺失时回退 exe 内嵌图标，再失败用系统图标。</summary>
+        /// <summary>
+        /// 加载图标：优先 Resource/tray.ico；若文件缺失或 ico 数据无法被 GDI+ 解析，
+        /// 回退到 exe 内嵌的 app.ico 资源；两者都失败时使用系统图标。
+        /// 关键：NotifyIcon.Icon 必须持有非 null 的 Icon 实例，null 会导致 Windows
+        /// Shell 在任务栏渲染出"空"图标（托盘图标不显示）。
+        /// </summary>
         private static Icon LoadIcon(string file)
         {
+            // 第一层：磁盘上的 tray.ico / app.ico（发布时由 csproj 复制出来）
             try
             {
-                var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
-                    "Resource", file);
-                if (File.Exists(path)) return new Icon(path);
-                // 回退：exe 内嵌图标（csproj ApplicationIcon = Resource\app.ico）
-                return Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resource", file);
+                if (File.Exists(path))
+                {
+                    using var stream = File.OpenRead(path);
+                    var icon = new Icon(stream);
+                    if (icon != null && icon.ToBitmap().Width > 0)
+                        return icon;
+                }
             }
-            catch (Exception ex) { Tools.Logger("图标加载失败，使用系统图标: " + ex.Message); }
+            catch (Exception ex)
+            {
+                Tools.Logger($"Resource/{file} 加载失败，回退 exe 内嵌图标: {ex.Message}");
+            }
+
+            // 第二层：exe 内嵌资源（csproj <ApplicationIcon>Resource\app.ico</ApplicationIcon>）
+            try
+            {
+                var exe = Application.ExecutablePath;
+                if (!string.IsNullOrEmpty(exe) && File.Exists(exe))
+                {
+                    var embedded = Icon.ExtractAssociatedIcon(exe);
+                    if (embedded != null && embedded.ToBitmap().Width > 0)
+                        return embedded;
+                }
+            }
+            catch (Exception ex)
+            {
+                Tools.Logger("exe 内嵌图标提取失败，回退系统图标: " + ex.Message);
+            }
+
+            // 第三层：系统默认图标（绝不返回 null）
+            Tools.Logger("图标加载全部失败，使用 SystemIcons.Application");
             return SystemIcons.Application;
         }
 
@@ -170,13 +201,19 @@ namespace DuoAssistant
             {
                 Icon = icon ?? SystemIcons.Application,
                 Text = Brand.Title,
-                Visible = true,
+                Visible = false,
                 ContextMenuStrip = _menu
             };
             // 双击托盘图标始终显示主窗口（不切换隐藏），最小化/关闭窗口才收回托盘
             _tray.MouseDoubleClick += (s, e) => ShowMain(-1);
             _tray.BalloonTipTitle = Brand.Title;
             _tray.BalloonTipText = L10n.T("已启动，右键托盘图标可管理打印任务与文档服务。");
+
+            // 关键：Windows Shell 对 NotifyIcon.Icon 的"先 Visible 后赋图标"存在已知时序缺陷——
+            // 在 Visible=true 与图标句柄注册之间若 Shell 已完成首次绘制，图标会永久不显示。
+            // 解决：先以 Visible=false 创建并赋值 Icon（此时 Shell 尚未注册 shell notification
+            // icon），再显示并弹出气泡；强制 Shell 走"重新注册"路径，图标即可正常渲染。
+            _tray.Visible = true;
             _tray.ShowBalloonTip(2500);
         }
 
