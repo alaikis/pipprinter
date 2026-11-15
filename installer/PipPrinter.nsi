@@ -81,6 +81,8 @@ LangString DESC_DESKTOP   ${LANG_SIMPCHINESE} "桌面快捷方式"
 LangString DESC_DESKTOP   ${LANG_ENGLISH}     "Desktop shortcut"
 LangString DESC_AUTORUN   ${LANG_SIMPCHINESE} "开机自动启动（HKCU 当前用户）"
 LangString DESC_AUTORUN   ${LANG_ENGLISH}     "Run at Windows startup (HKCU, current user)"
+LangString DESC_OFFICE    ${LANG_SIMPCHINESE} "Office 转换器（内置 LibreOffice，用于打印 .docx/.xlsx/.pptx 等）"
+LangString DESC_OFFICE    ${LANG_ENGLISH}     "Office converter (bundled LibreOffice, for .docx/.xlsx/.pptx printing)"
 
 ; ============================================================
 Section "PipPrinter (required)" SEC_CORE
@@ -144,6 +146,18 @@ Section "开机自启 / Autorun" SEC_AUTORUN
     "$\"$INSTDIR\PipPrinter.exe$\""
 SectionEnd
 
+; Office 转换器：仅当发布目录存在 office-converter/ 时安装（构建时可选注入）
+Section "Office 转换器 / Office Converter" SEC_OFFICE
+  ${If} ${FileExists} "${PUBLISH_DIR}${SEP}office-converter${SEP}*"
+    CreateDirectory "$INSTDIR\lib\office"
+    SetOutPath "$INSTDIR\lib\office"
+    File /r "${PUBLISH_DIR}${SEP}office-converter${SEP}*.*"
+    DetailPrint "Office 转换器已安装到 lib/office/"
+  ${Else}
+    DetailPrint "发布目录未包含 office-converter/，跳过 Office 转换器"
+  ${EndIf}
+SectionEnd
+
 ; ============================================================
 Section "Uninstall"
   ; 卸载日志（排障用，写完后删除）
@@ -158,6 +172,7 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\docs"
   RMDir /r "$INSTDIR\pdfreader"
   RMDir /r "$INSTDIR\Resource"
+  RMDir /r "$INSTDIR\lib"
   FileWrite $9 "program files removed$\r$\n"
 
   MessageBox MB_YESNO|MB_ICONQUESTION \
@@ -188,4 +203,5 @@ SectionEnd
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_SHORTCUTS} $(DESC_SHORTCUTS)
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_DESKTOP} $(DESC_DESKTOP)
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_AUTORUN} $(DESC_AUTORUN)
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_OFFICE} $(DESC_OFFICE)
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
