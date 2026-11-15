@@ -70,6 +70,8 @@ namespace DuoAssistant.Services
         public string TempDir => Path.Combine(BaseDir, "temp");
         public string LogDir => Path.Combine(BaseDir, "log");
         public string DriverDir => Path.Combine(BaseDir, "lib", "driver");
+        /// <summary>内置 Office 转换器（LibreOffice 便携版）目录，soffice.exe 在此。</summary>
+        public string OfficeConverterDir => Path.Combine(BaseDir, "lib", "office");
         public string DocsDir => Path.Combine(BaseDir, "docs", "web");
         public string QueuePath => Path.Combine(DataDir, "queue.json");
 
@@ -83,7 +85,7 @@ namespace DuoAssistant.Services
 
         private void EnsureDirectories()
         {
-            foreach (var dir in new[] { ConfigDir, DataDir, TempDir, LogDir, DriverDir })
+            foreach (var dir in new[] { ConfigDir, DataDir, TempDir, LogDir, DriverDir, OfficeConverterDir })
             {
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
             }

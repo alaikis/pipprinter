@@ -814,17 +814,40 @@ namespace DuoAssistant.Services
             return PrintWithShellVerb(file, printer);
         }
 
-        /// <summary>查找 LibreOffice soffice.exe（headless 转换 Office/OFD 用）。</summary>
+        /// <summary>
+        /// 查找 LibreOffice soffice.exe（headless 转换 Office/OFD 用）。
+        /// 优先级：lib/office/（内置转换器）→ 随包 office-converter/ → 系统 LibreOffice → 在线获取。
+        /// </summary>
         private static string FindSoffice()
         {
-            var candidates = new[]
+            // 1) 内置转换器（随包注入或在线下载后落在 lib/office/）
+            var builtin = Path.Combine(SettingsStore.Instance.BaseDir, "lib", "office", "soffice.exe");
+            if (File.Exists(builtin)) return builtin;
+
+            // 2) 随包资源目录
+            var bundled = Path.Combine(SettingsStore.Instance.BaseDir, "office-converter", "soffice.exe");
+            if (File.Exists(bundled)) return bundled;
+
+            // 3) 系统已安装的 LibreOffice
+            var systemCandidates = new[]
             {
                 Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\LibreOffice\program\soffice.exe"),
                 Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\LibreOffice\program\soffice.exe"),
                 @"C:\Program Files\LibreOffice\program\soffice.exe",
                 @"C:\Program Files (x86)\LibreOffice\program\soffice.exe"
             };
-            foreach (var c in candidates) if (File.Exists(c)) return c;
+            foreach (var c in systemCandidates) if (File.Exists(c)) return c;
+
+            // 4) 在线获取（DriverCheck.EnsureOfficeConverter 内部走完整校验链路）
+            try
+            {
+                var path = new DriverCheck().EnsureOfficeConverter();
+                if (!string.IsNullOrEmpty(path) && File.Exists(path)) return path;
+            }
+            catch (Exception ex)
+            {
+                Tools.Logger("在线获取 Office 转换器失败: " + ex.Message);
+            }
             return null;
         }
 
