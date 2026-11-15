@@ -45,7 +45,7 @@ VIAddVersionKey "CompanyName" "${COMPANY}"
 VIAddVersionKey "LegalCopyright" "© 2026 ${COMPANY}. All rights reserved."
 VIAddVersionKey "FileDescription" "荔枝打印助手 Lychee Printing Assistant 安装程序"
 VIAddVersionKey "FileVersion" "${VERSION}"
-VIProductVersion "1.0.2.0"
+VIProductVersion "1.0.3.0"
 
 ; 编译期路径分隔符用 ${SEP} 保证跨平台（Windows makensis 需反斜杠，Linux 需正斜杠）
 !define MUI_ICON "..${SEP}Resource${SEP}app.ico"
