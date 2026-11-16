@@ -18,3 +18,9 @@ installer/*.exe
 pdfreader/SumatraPDF-settings.txt
 /cloud/
 /site/
+
+# SignPath: 本地签名私钥（绝不入库）
+installer/*.pfx
+
+# EmDash CMS（独立 Cloudflare 部署，非 OSS 主仓库）
+/emdash/
