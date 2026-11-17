@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Alaikis Limited
+﻿// Copyright (c) 2026 Alaikis.com Inc
 // Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -19,6 +19,13 @@ namespace DuoAssistant.Services
         public string WebHost { get; set; } = "0.0.0.0";
         public int WebPort { get; set; } = 19861;
         public string DefaultPrinter { get; set; } = "";
+        // ---- 默认打印参数：API 未显式传对应字段时回退到这些值（设置页「默认打印参数」可改）----
+        public int DefaultCopies { get; set; } = 1;
+        public string DefaultOrientation { get; set; } = "portrait";
+        public string DefaultPaperSize { get; set; } = "";
+        public string DefaultDuplex { get; set; } = "simplex";
+        public int DefaultMargin { get; set; } = 50;
+        public string DefaultPageOrder { get; set; } = "";
         public bool AutoStart { get; set; } = true;
         public string LogLevel { get; set; } = "DEBUG";
         public int CleanMaxAgeDays { get; set; } = 7;
@@ -119,6 +126,11 @@ namespace DuoAssistant.Services
                         }
                         if (loaded.CleanWhitelist == null) loaded.CleanWhitelist = Defaults().CleanWhitelist;
                         if (string.IsNullOrWhiteSpace(loaded.Language)) loaded.Language = "auto";
+                        // 默认打印参数：旧配置缺字段时补默认值（区分「未配置」与「显式设为 0/空」）
+                        if (loaded.DefaultCopies <= 0) loaded.DefaultCopies = 1;
+                        if (string.IsNullOrWhiteSpace(loaded.DefaultOrientation)) loaded.DefaultOrientation = "portrait";
+                        // DefaultPaperSize / DefaultPageOrder / DefaultDuplex 允许空串（跟随打印机/系统默认），不强行补值
+                        if (loaded.DefaultMargin < 0) loaded.DefaultMargin = 50;
                         return loaded;
                     }
                 }

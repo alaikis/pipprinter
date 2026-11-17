@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Alaikis Limited
+﻿// Copyright (c) 2026 Alaikis.com Inc
 // Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -1035,25 +1035,42 @@ namespace DuoAssistant.Services
         private static PrintJob BuildJob(JObject dt, string target)
         {
             var isHttp = ExtendedPrintService.NormalizeUrlSafe(target) != null;
+            var s = SettingsStore.Instance.Current;
+            // 用 HasKey 区分「未传」与「显式传空/null」：未传时回退设置页的默认打印参数；
+            // 显式传空则尊重调用方（例如 paperKind:"" 表示跟随打印机，而非套用默认值）。
+            var copiesReq = HasKey(dt, "copies");
+            var duplexReq = HasKey(dt, "duplex");
+            var orientationReq = HasKey(dt, "orientation") || HasKey(dt, "scale");
+            var paperReq = HasKey(dt, "paperKind");
+            var marginReq = HasKey(dt, "margin");
+            var pageOrderReq = HasKey(dt, "pageOrder") || HasKey(dt, "parity");
             return new PrintJob
             {
                 Source = isHttp ? "url" : "file",
                 Target = target,
-                Printer = Str(dt, "printer") ?? SettingsStore.Instance.Current.DefaultPrinter ?? "",
-                Copies = Math.Max(1, Int(dt, "copies", 1)),
+                Printer = Str(dt, "printer") ?? s.DefaultPrinter ?? "",
+                Copies = copiesReq ? Math.Max(1, Int(dt, "copies", 1)) : Math.Max(1, s.DefaultCopies),
                 Fit = Str(dt, "fit") ?? "fit",
-                Scale = Str(dt, "scale") ?? Str(dt, "orientation") ?? "portrait",
-                PaperKind = Str(dt, "paperKind") ?? "",
+                Scale = orientationReq
+                    ? (Str(dt, "orientation") ?? Str(dt, "scale") ?? "portrait")
+                    : (string.IsNullOrWhiteSpace(s.DefaultOrientation) ? "portrait" : s.DefaultOrientation),
+                PaperKind = paperReq ? (Str(dt, "paperKind") ?? "") : (s.DefaultPaperSize ?? ""),
                 Pages = Str(dt, "printPages") ?? Str(dt, "pages") ?? "1-",
-                Duplex = Str(dt, "duplex") ?? "simplex",
+                Duplex = duplexReq ? (Str(dt, "duplex") ?? "simplex")
+                    : (string.IsNullOrWhiteSpace(s.DefaultDuplex) ? "simplex" : s.DefaultDuplex),
                 Color = TriBool(dt, "color"),
                 Collate = Bool(dt, "collate", true),
-                Margin = Math.Max(0, Math.Min(500, Int(dt, "margin", 50))),
+                Margin = marginReq ? Math.Max(0, Math.Min(500, Int(dt, "margin", 50)))
+                    : Math.Max(0, Math.Min(500, s.DefaultMargin)),
                 Bin = Str(dt, "bin") ?? "",
                 Dpi = Math.Max(0, Int(dt, "dpi", 0)),
-                PageOrder = Str(dt, "pageOrder") ?? Str(dt, "parity") ?? ""
+                PageOrder = pageOrderReq ? (Str(dt, "pageOrder") ?? Str(dt, "parity") ?? "")
+                    : (s.DefaultPageOrder ?? "")
             };
         }
+
+        /// <summary>字段是否由调用方显式提供（含显式 null/空）；用于区分「未传」与「传空」。</summary>
+        private static bool HasKey(JObject o, string key) => o != null && o[key] != null;
 
         /// <summary>三态布尔：缺省 / auto 表示跟随打印机，不强行设置。</summary>
         private static bool? TriBool(JObject o, string key)

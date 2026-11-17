@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Alaikis Limited
+﻿// Copyright (c) 2026 Alaikis.com Inc
 // Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -15,9 +15,9 @@ namespace DuoAssistant.Utils
         public const string NameCn = "荔枝打印助手";
         public const string Title = "Lychee Printing Assistant — 荔枝打印助手";
         public const string Exe = "PipPrinter.exe";
-        public const string Company = "Alaikis Limited";
+        public const string Company = "Alaikis.com Inc";
         public const string CompanyUrl = "https://alaikis.com";
         // 版本规范 vMAJOR.FEATURE.PATCH：补丁 001→002；大变更 FEATURE+1；重大重构 MAJOR+1
-        public const string Version = "1.01.003";
+        public const string Version = "1.01.004";
     }
 }

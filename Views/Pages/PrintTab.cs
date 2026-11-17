@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Alaikis Limited
+﻿// Copyright (c) 2026 Alaikis.com Inc
 // Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -22,6 +22,9 @@ namespace DuoAssistant.Views.Pages
         private readonly ComboBox _scale = Ui.Combo(110);
         private readonly ComboBox _paper = Ui.EditableCombo(100);
         private readonly TextBox _pages = Ui.Input(90);
+        private readonly ComboBox _duplex = Ui.Combo(120);
+        private readonly NumericUpDown _margin = Ui.Number(0, 500, 50, 70);
+        private readonly ComboBox _pageOrder = Ui.Combo(100);
         private readonly TextBox _output = Ui.Input(0, true);
         private readonly Label _hint = Ui.Label("");
 
@@ -35,7 +38,8 @@ namespace DuoAssistant.Views.Pages
 
         private void BuildUi()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(12) };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(12) };
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -70,29 +74,49 @@ namespace DuoAssistant.Views.Pages
                 Ui.Label(L10n.T("页码：")), _pages);
             root.Controls.Add(row2, 0, 1);
 
+            // 双面 / 边距 / 页序：与「设置 → 默认打印参数」同构；留空表示跟随打印机/系统默认
+            var s0 = SettingsStore.Instance.Current;
+            _duplex.Items.AddRange(new object[] { "simplex", "duplexlong", "duplexshort" });
+            _duplex.SelectedItem = string.IsNullOrWhiteSpace(s0.DefaultDuplex) ? "simplex" : s0.DefaultDuplex;
+            if (_duplex.SelectedIndex < 0) _duplex.SelectedIndex = 0;
+            _margin.Value = Math.Min(_margin.Maximum, Math.Max(0, s0.DefaultMargin));
+            _pageOrder.Items.AddRange(new object[] { "", "fwd", "rev", "fwdcoll", "revcoll" });
+            _pageOrder.SelectedItem = s0.DefaultPageOrder ?? "";
+            if (_pageOrder.SelectedIndex < 0) _pageOrder.SelectedIndex = 0;
+            var row2b = Ui.Toolbar(
+                Ui.Label(L10n.T("双面：")), _duplex,
+                Ui.Label(L10n.T("边距(1/100英寸)：")), _margin,
+                Ui.Label(L10n.T("页序：")), _pageOrder);
+            root.Controls.Add(row2b, 0, 2);
+
             var row3 = Ui.Toolbar(
                 Ui.Button(L10n.T("立即打印"), (s, e) => Run("PrintFile"), 120, primary: true),
                 Ui.Button(L10n.T("加入队列"), (s, e) => Run("QueuePrint"), 120),
                 Ui.Button(L10n.T("打印测试页"), (s, e) => TestPage(), 120),
                 Ui.Button(L10n.T("清空输出"), (s, e) => _output.Clear(), 90));
-            root.Controls.Add(row3, 0, 2);
+            root.Controls.Add(row3, 0, 3);
 
             _hint.Text = L10n.T("支持类型：") + string.Join(" / ", PrintFileTypes.All) +
-                         L10n.T("  ·  PDF 走 SumatraPDF，Office/图片/文本走系统关联程序，HTML 走无头浏览器转 PDF") +
                          L10n.T("  ·  纸张可选 A0–A5（A0/A1 自动换算毫米尺寸，需打印机驱动支持大幅面）");
             _hint.ForeColor = Color.DimGray;
             _hint.AutoSize = true;
-            root.Controls.Add(_hint, 0, 3);
+            root.Controls.Add(_hint, 0, 4);
 
             _output.ReadOnly = true;
             _output.Dock = DockStyle.Fill;
             _output.BackColor = Color.FromArgb(248, 250, 252);
-            root.Controls.Add(_output, 0, 4);
+            root.Controls.Add(_output, 0, 5);
 
             Controls.Add(root);
         }
 
-        public void RefreshData() => RefreshPrinters();
+        public void RefreshData()
+        {
+            // 构造函数里首次调用时句柄尚未创建，直接跳过打印机的 UI 刷新（届时列表为空也无意义）；
+            // 由 ShowMain 在窗口显示后再次调用完成实际加载，避免访问未创建句柄的控件。
+            if (!IsHandleCreated) return;
+            RefreshPrinters();
+        }
 
         private void RefreshPrinters()
         {
@@ -138,9 +162,25 @@ namespace DuoAssistant.Views.Pages
                 ["fit"] = _fit.SelectedItem as string ?? "fit",
                 ["scale"] = _scale.SelectedItem as string ?? "portrait",
                 ["paperKind"] = _paper.Text.Trim(),
-                ["printPages"] = string.IsNullOrWhiteSpace(_pages.Text) ? "1-" : _pages.Text.Trim()
+                ["printPages"] = string.IsNullOrWhiteSpace(_pages.Text) ? "1-" : _pages.Text.Trim(),
+                ["duplex"] = DuplexFromCombo(_duplex.SelectedItem as string),
+                ["margin"] = (int)_margin.Value,
+                ["pageOrder"] = PageOrderFromCombo(_pageOrder.SelectedItem as string)
             };
             Append(cmd, CommandDispatcher.Execute(cmd, payload.ToString()));
+        }
+
+        // 组合框存的就是协议值，这里做容错归一；未选则回落 AppSettings 默认值，由 BuildJob 再兜底。
+        private static string DuplexFromCombo(string v)
+        {
+            var s = (v ?? "").Trim().ToLowerInvariant();
+            return s == "duplexlong" || s == "duplexshort" || s == "duplex" || s == "simplex" ? s : "simplex";
+        }
+
+        private static string PageOrderFromCombo(string v)
+        {
+            var s = (v ?? "").Trim().ToLowerInvariant();
+            return s == "fwd" || s == "rev" || s == "fwdcoll" || s == "revcoll" ? s : "";
         }
 
         private void Append(string cmd, string json)

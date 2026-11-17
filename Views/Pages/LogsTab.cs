@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Alaikis Limited
+﻿// Copyright (c) 2026 Alaikis.com Inc
 // Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -53,6 +53,9 @@ namespace DuoAssistant.Views.Pages
             _timer.Tick += (s, e) => { if (_auto.Checked) RefreshData(); };
             _timer.Start();
             RefreshData();
+
+            // 控件销毁时停止并释放定时器，避免后台刷新已销毁控件导致对象泄漏。
+            Disposed += (s, e) => { _timer.Stop(); _timer.Dispose(); };
         }
 
         public void RefreshData()
