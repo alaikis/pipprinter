@@ -4,6 +4,13 @@
 > 备选邮件：oss-support@signpath.org
 > 准备日期：2026-11-17
 > 维护人：Alaikis.com Inc / @alaikis (GitHub)
+>
+> ## ✅ 申请状态
+> **已提交（2026-11-17）**：通过 signpath.org/apply 表单提交成功，返回「Form submitted / Thank you, we'll be in touch soon」。
+> - 提交邮箱：`alex@laialex.com`
+> - 申请字段见下方「申请表字段」
+> - 等待 SignPath 人工审核（通常 1-3 个工作日，可能邮件追问，请留意 alex@laialex.com）
+> - 批准后按下方「申请后流程」接入 GitHub Actions 签名
 
 ---
 
