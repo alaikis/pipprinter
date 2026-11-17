@@ -1,6 +1,6 @@
 ﻿; ============================================================
 ; PipPrinter / 荔枝打印助手 (Lychee Printing Assistant) — NSIS 安装向导
-; 公司：Alaikis Limited  https://alaikis.com
+; 公司：Alaikis.com Inc  https://alaikis.com
 ;
 ; 本地构建（Windows）：
 ;   makensis /DVERSION=1.00.002 /DPUBLISH_DIR=..\release\publish installer\PipPrinter.nsi
@@ -26,7 +26,7 @@
   !define SEP "\"
 !endif
 !ifndef COMPANY
-  !define COMPANY "Alaikis Limited"
+  !define COMPANY "Alaikis.com Inc"
 !endif
 !ifndef PUBURL
   !define PUBURL "https://gitee.com/alaikiscom/pipprinter"

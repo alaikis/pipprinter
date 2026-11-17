@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Alaikis Limited
+// Copyright (c) 2026 Alaikis.com Inc
 // Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
 // You may use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of this software at: http://license.coscl.org.cn/MulanPSL2

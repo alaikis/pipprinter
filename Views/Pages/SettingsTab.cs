@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Alaikis Limited
+﻿// Copyright (c) 2026 Alaikis.com Inc
 // Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -24,6 +24,13 @@ namespace DuoAssistant.Views.Pages
         private readonly NumericUpDown _age = Ui.Number(0, 365, 7, 80);
         private readonly NumericUpDown _minSize = Ui.Number(0, 1024, 1, 80);
         private readonly NumericUpDown _tempAutoCleanDays = Ui.Number(0, 365, 7, 40);
+        // 默认打印参数（API 未显式传参时回退到这些值）
+        private readonly NumericUpDown _defCopies = Ui.Number(1, 99, 1, 60);
+        private readonly ComboBox _defOrientation = Ui.Combo(110);
+        private readonly ComboBox _defPaperSize = Ui.EditableCombo(110);
+        private readonly ComboBox _defDuplex = Ui.Combo(120);
+        private readonly NumericUpDown _defMargin = Ui.Number(0, 500, 50, 70);
+        private readonly ComboBox _defPageOrder = Ui.Combo(120);
         private readonly CheckBox _autoStart = new CheckBox { Text = "", AutoSize = true, Font = Ui.LabelFont };
         private readonly CheckBox _recycle = new CheckBox { Text = "", AutoSize = true, Font = Ui.LabelFont };
         private readonly TextBox _whitelist = Ui.Input(520, true);
@@ -83,6 +90,22 @@ namespace DuoAssistant.Views.Pages
             root.Controls.Add(Ui.Label(L10n.T("打印与日志"), true));
             _logLevel.Items.AddRange(new object[] { "DEBUG", "INFO", "WARN", "ERROR" });
             root.Controls.Add(Row(Ui.Label(L10n.T("日志级别：")), _logLevel, _autoStart));
+
+            root.Controls.Add(Ui.Label(L10n.T("默认打印参数"), true));
+            _defOrientation.Items.AddRange(new object[] { "portrait", "landscape" });
+            _defDuplex.Items.AddRange(new object[] { "simplex", "duplexlong", "duplexshort" });
+            _defPaperSize.Items.AddRange(new object[]
+            {
+                "", "A0", "A1", "A2", "A3", "A4", "A5", "letter", "legal", "tabloid", "statement"
+            });
+            _defPageOrder.Items.AddRange(new object[] { "", "fwd", "rev", "fwdcoll", "revcoll" });
+            root.Controls.Add(Row(Ui.Label(L10n.T("默认份数：")), _defCopies,
+                Ui.Label(L10n.T("方向：")), _defOrientation,
+                Ui.Label(L10n.T("双面：")), _defDuplex));
+            root.Controls.Add(Row(Ui.Label(L10n.T("默认纸张：")), _defPaperSize,
+                Ui.Label(L10n.T("边距(1/100英寸)：")), _defMargin,
+                Ui.Label(L10n.T("页序：")), _defPageOrder));
+            root.Controls.Add(Ui.Label(L10n.T("以上为接口未显式传参时的默认值；留空表示跟随打印机 / 系统默认。"), false));
 
             root.Controls.Add(Ui.Label(L10n.T("磁盘清理"), true));
             root.Controls.Add(Row(Ui.Label(L10n.T("保留天数：")), _age, Ui.Label(L10n.T("最小文件(MB)：")), _minSize, _recycle));
@@ -157,6 +180,17 @@ namespace DuoAssistant.Views.Pages
             var codes = new[] { L10n.Auto, L10n.ZhCn, L10n.En };
             var langIndex = System.Array.IndexOf(codes, (s.Language ?? L10n.Auto).Trim());
             _language.SelectedIndex = langIndex >= 0 ? langIndex : 0;
+            // 默认打印参数
+            _defCopies.Value = Math.Min(_defCopies.Maximum, Math.Max(1, s.DefaultCopies));
+            _defOrientation.SelectedItem = string.IsNullOrWhiteSpace(s.DefaultOrientation) ? "portrait" : s.DefaultOrientation;
+            if (_defOrientation.SelectedIndex < 0) _defOrientation.SelectedIndex = 0;
+            _defDuplex.SelectedItem = string.IsNullOrWhiteSpace(s.DefaultDuplex) ? "simplex" : s.DefaultDuplex;
+            if (_defDuplex.SelectedIndex < 0) _defDuplex.SelectedIndex = 0;
+            _defPaperSize.Text = s.DefaultPaperSize ?? "";
+            _defMargin.Value = Math.Min(_defMargin.Maximum, Math.Max(0, s.DefaultMargin));
+            _defPageOrder.SelectedItem = s.DefaultPageOrder ?? "";
+            if (_defPageOrder.SelectedIndex < 0) _defPageOrder.SelectedIndex = 0;
+
             _age.Value = Math.Min(_age.Maximum, s.CleanMaxAgeDays);
             _minSize.Value = Math.Min(_minSize.Maximum, s.CleanMinSizeMB);
             _tempAutoCleanDays.Value = Math.Min(_tempAutoCleanDays.Maximum,
@@ -217,6 +251,13 @@ namespace DuoAssistant.Views.Pages
                 ["webHost"] = _webHost.Text.Trim(),
                 ["webPort"] = (int)_webPort.Value,
                 ["defaultPrinter"] = _defaultPrinter.SelectedIndex == 0 ? "" : _defaultPrinter.SelectedItem?.ToString() ?? "",
+                // 默认打印参数
+                ["defaultCopies"] = (int)_defCopies.Value,
+                ["defaultOrientation"] = _defOrientation.SelectedItem?.ToString() ?? "portrait",
+                ["defaultPaperSize"] = _defPaperSize.Text.Trim(),
+                ["defaultDuplex"] = _defDuplex.SelectedItem?.ToString() ?? "simplex",
+                ["defaultMargin"] = (int)_defMargin.Value,
+                ["defaultPageOrder"] = _defPageOrder.SelectedItem?.ToString() ?? "",
                 ["logLevel"] = _logLevel.SelectedItem?.ToString() ?? "DEBUG",
                 ["cleanMaxAgeDays"] = (int)_age.Value,
                 ["cleanMinSizeMB"] = (int)_minSize.Value,

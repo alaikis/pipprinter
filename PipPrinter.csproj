@@ -21,16 +21,16 @@
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <!-- 版本规范 vMAJOR.FEATURE.PATCH：补丁版递增 PATCH(001→002)，大变更递增 FEATURE(1.01.000)，重大重构递增 MAJOR -->
-    <Version>1.01.003</Version>
-    <AssemblyVersion>1.1.0.3</AssemblyVersion>
-    <FileVersion>1.1.0.3</FileVersion>
+    <Version>1.01.004</Version>
+    <AssemblyVersion>1.1.0.4</AssemblyVersion>
+    <FileVersion>1.1.0.4</FileVersion>
     <Product>Lychee Printing Assistant</Product>
     <Description>Lychee Printing Assistant / 荔枝打印助手 — 托盘常驻的本地打印助手</Description>
     <!-- exe 文件图标（资源管理器/桌面/任务栏显示） -->
     <ApplicationIcon>Resource\app.ico</ApplicationIcon>
-    <Company>Alaikis Limited</Company>
-    <Authors>Alaikis Limited</Authors>
-    <Copyright>© 2026 Alaikis Limited. All rights reserved.</Copyright>
+    <Company>Alaikis.com Inc</Company>
+    <Authors>Alaikis.com Inc</Authors>
+    <Copyright>© 2026 Alaikis.com Inc. All rights reserved.</Copyright>
     <!-- iTextSharp / BouncyCastle 是 .NET Framework 兼容包，NU1701 属预期 -->
     <NoWarn>$(NoWarn);NU1701;WFO5001</NoWarn>
     <!--

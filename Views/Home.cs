@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Alaikis Limited
+﻿// Copyright (c) 2026 Alaikis.com Inc
 // Lychee Printing Assistant (PipPrinter) is licensed under Mulan PSL v2.
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -26,6 +26,8 @@ namespace DuoAssistant
         private ToolStripStatusLabel _status;
         private bool _allowClose;
         private bool _isShown;
+        // 上次观察到的等待任务数，用于检测「新任务入队」并自动弹出打印队列窗口
+        private int _lastPendingCount;
         // 阻止 WinForms 框架在 Application.Run 时自动显示主窗体
         private bool _allowVisible;
 
@@ -381,6 +383,17 @@ namespace DuoAssistant
                 Program.WebRunning ? Program.DocsUrl : L10n.T("未运行"),
                 q["pending"], q["printing"], q["done"], q["failed"]);
             Text = Brand.Title + (q["pending"]?.Value<int>() > 0 ? L10n.T("  [队列待处理]") : "");
+
+            // 新任务入队时自动弹出打印队列窗口（用户明确要求打印时能看到前台队列窗口）。
+            // 只在等待数「增加」且主窗口当前隐藏时触发，避免打印中/完成态变化反复弹窗。
+            var pending = q["pending"]?.Value<int>() ?? 0;
+            if (pending > _lastPendingCount && !_isShown)
+            {
+                ShowMain(1);
+                _tray?.ShowBalloonTip(2000, L10n.T("打印队列"),
+                    L10n.F("新任务入队：{0} 个等待处理", pending), ToolTipIcon.Info);
+            }
+            _lastPendingCount = pending;
         }
     }
 }
