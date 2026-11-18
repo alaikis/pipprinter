@@ -76,9 +76,23 @@ namespace DuoAssistant.Views.Pages
                     text = sr.ReadToEnd();
                 // 只保留尾部 200KB，避免 UI 卡顿
                 if (text.Length > 200_000) text = text.Substring(text.Length - 200_000);
-                _viewer.Text = text;
-                _viewer.SelectionStart = _viewer.TextLength;
-                _viewer.ScrollToCaret();
+                // 内容没变就不重写 TextBox：整段赋值会让日志区每 3 秒闪一次并抢走滚动位置。
+                if (!string.Equals(_viewer.Text, text, StringComparison.Ordinal))
+                {
+                    var followTail = _viewer.SelectionStart >= _viewer.TextLength - 16;
+                    var topIndex = _viewer.GetCharIndexFromPosition(new Point(2, 2));
+                    _viewer.Text = text;
+                    if (followTail)
+                    {
+                        _viewer.SelectionStart = _viewer.TextLength;
+                        _viewer.ScrollToCaret();
+                    }
+                    else if (topIndex > 0)
+                    {
+                        _viewer.SelectionStart = Math.Min(topIndex, _viewer.TextLength);
+                        _viewer.ScrollToCaret();
+                    }
+                }
                 _status.Text = Path.GetFileName(file) + " · " + new FileInfo(file).Length + " bytes";
             }
             catch (Exception ex) { _status.Text = L10n.T("读取失败: ") + ex.Message; }

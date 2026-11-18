@@ -19,6 +19,16 @@ namespace DuoAssistant.Views.Pages
     /// <summary>轻量 UI 构建辅助，统一控件样式与跨线程封送。颜色取自 Theme。</summary>
     public static class Ui
     {
+        /// <summary>自绘 ListView 默认不带双缓冲，定时重建行时整表闪动；这里统一开启。</summary>
+        private sealed class BufferedListView : ListView
+        {
+            public BufferedListView()
+            {
+                SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
+                         ControlStyles.ResizeRedraw, true);
+            }
+        }
+
         public static readonly Font LabelFont = Theme.BodyFont;
 
         public static Button Button(string text, EventHandler onClick, int width = 110, bool primary = false)
@@ -146,7 +156,7 @@ namespace DuoAssistant.Views.Pages
         /// <summary>主题化 ListView：无网格线、圆角表头、浅红行选中。</summary>
         public static ListView List(params string[] columns)
         {
-            var lv = new ListView
+            var lv = new BufferedListView
             {
                 Dock = DockStyle.Fill,
                 View = View.Details,

@@ -59,34 +59,66 @@ namespace DuoAssistant.Views.Pages
             Disposed += (s, e) => { _timer.Stop(); _timer.Dispose(); };
         }
 
+        // 上一次渲染出的完整行内容；无变化时跳过重建，避免定时器每 2 秒整表闪动。
+        private string _lastSignature;
+
         public void RefreshData()
         {
-            if (!IsHandleCreated && !IsDisposed) { /* 首次由构造函数调用，直接绘制 */ }
-            var selected = _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Text : null;
             var jobs = PrintQueueService.Instance.GetAll();
             var sum = JObject.FromObject(PrintQueueService.Instance.Summary());
+            var summary = L10n.F("共 {0} · 等待 {1} · 打印中 {2} · 完成 {3} · 失败 {4}",
+                sum["total"], sum["pending"], sum["printing"], sum["done"], sum["failed"]);
+            var signature = string.Join("\u001e", jobs.Select(RowKey)) + "\u001d" + summary;
+            if (signature == _lastSignature) return;
+            _lastSignature = signature;
+
+            // 重建前记住选中项与首行，重建后原位恢复，避免滚动条跳动与选中丢失。
+            string selectedId = null, topId = null;
+            int topIndex = 0;
+            if (IsHandleCreated)
+            {
+                if (_list.SelectedItems.Count > 0) selectedId = _list.SelectedItems[0].Text;
+                topId = _list.TopItem?.Text;
+                topIndex = _list.TopItem?.Index ?? 0;
+            }
 
             _list.BeginUpdate();
-            _list.Items.Clear();
-            foreach (var j in jobs)
+            try
             {
-                var item = new ListViewItem(j.Id);
-                item.SubItems.Add(j.FileName);
-                item.SubItems.Add(string.IsNullOrWhiteSpace(j.Printer) ? L10n.T("(默认)") : j.Printer);
-                item.SubItems.Add(j.Copies.ToString());
-                item.SubItems.Add(StatusText(j.Status));
-                item.SubItems.Add(j.EnqueuedAt.ToString("MM-dd HH:mm:ss"));
-                item.SubItems.Add(j.FinishedAt?.ToString("MM-dd HH:mm:ss") ?? "-");
-                item.SubItems.Add(j.Error ?? "");
-                item.Tag = j;
-                item.ForeColor = StatusColor(j.Status);
-                _list.Items.Add(item);
-                if (selected == j.Id) item.Selected = true;
+                _list.Items.Clear();
+                ListViewItem topAnchor = null;
+                foreach (var j in jobs)
+                {
+                    var item = new ListViewItem(j.Id);
+                    item.SubItems.Add(j.FileName);
+                    item.SubItems.Add(string.IsNullOrWhiteSpace(j.Printer) ? L10n.T("(默认)") : j.Printer);
+                    item.SubItems.Add(j.Copies.ToString());
+                    item.SubItems.Add(StatusText(j.Status));
+                    item.SubItems.Add(j.EnqueuedAt.ToString("MM-dd HH:mm:ss"));
+                    item.SubItems.Add(j.FinishedAt?.ToString("MM-dd HH:mm:ss") ?? "-");
+                    item.SubItems.Add(j.Error ?? "");
+                    item.Tag = j;
+                    item.ForeColor = StatusColor(j.Status);
+                    _list.Items.Add(item);
+                    if (topId == j.Id) topAnchor = item;
+                    if (selectedId == j.Id) item.Selected = true;
+                }
+                if (topAnchor != null) _list.TopItem = topAnchor;
+                else if (topIndex > 0 && _list.Items.Count > topIndex) _list.TopItem = _list.Items[topIndex];
             }
-            _list.EndUpdate();
+            finally { _list.EndUpdate(); }
 
-            _summary.Text = L10n.F("共 {0} · 等待 {1} · 打印中 {2} · 完成 {3} · 失败 {4}",
-                sum["total"], sum["pending"], sum["printing"], sum["done"], sum["failed"]);
+            _summary.Text = summary;
+        }
+
+        private static string RowKey(PrintJob j)
+        {
+            return string.Join("\u001f",
+                j.Id, j.FileName,
+                string.IsNullOrWhiteSpace(j.Printer) ? L10n.T("(默认)") : j.Printer,
+                j.Copies.ToString(), StatusText(j.Status),
+                j.EnqueuedAt.ToString("MM-dd HH:mm:ss"),
+                j.FinishedAt?.ToString("MM-dd HH:mm:ss") ?? "-", j.Error ?? "");
         }
 
         private static string StatusText(string s)
