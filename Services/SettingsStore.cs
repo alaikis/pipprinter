@@ -40,6 +40,11 @@ namespace DuoAssistant.Services
         public string MachineId { get; set; } = "";
         // Gitee 自动更新清单 URL（latest.json 所在 release 的 attach_files 直链）
         public string UpdateManifestUrl { get; set; } = "https://gitee.com/alaikiscom/pipprinter/releases/latest";
+        // ---- 自动检查更新（启动延迟检查一次 + 后台按间隔定时检查；只提示，不自动下载）----
+        // 是否启用自动检查；默认开启。
+        public bool AutoCheckUpdate { get; set; } = true;
+        // 后台检查间隔（小时）；0 或负数会被 Load 补为默认值 6。
+        public int AutoCheckIntervalHours { get; set; } = 6;
         // 界面语言：auto（跟随系统）/ zh-CN / en；未匹配的系统语言回退英文
         public string Language { get; set; } = "auto";
         // ---- Active-Online Print（AO 主动在线打印）----
@@ -131,6 +136,8 @@ namespace DuoAssistant.Services
                         if (string.IsNullOrWhiteSpace(loaded.DefaultOrientation)) loaded.DefaultOrientation = "portrait";
                         // DefaultPaperSize / DefaultPageOrder / DefaultDuplex 允许空串（跟随打印机/系统默认），不强行补值
                         if (loaded.DefaultMargin < 0) loaded.DefaultMargin = 50;
+                        // 自动检查更新：间隔 <=0 补默认（bool 缺字段时属性初始值 true 即默认开启，无需补）
+                        if (loaded.AutoCheckIntervalHours <= 0) loaded.AutoCheckIntervalHours = 6;
                         return loaded;
                     }
                 }

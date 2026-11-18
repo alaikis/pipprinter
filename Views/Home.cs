@@ -28,6 +28,8 @@ namespace DuoAssistant
         private bool _isShown;
         // 上次观察到的等待任务数，用于检测「新任务入队」并自动弹出打印队列窗口
         private int _lastPendingCount;
+        // 自动更新检查发现的版本；气泡点击时据此走更新确认流程
+        private UpdateInfo _pendingAutoUpdate;
         // 阻止 WinForms 框架在 Application.Run 时自动显示主窗体
         private bool _allowVisible;
 
@@ -208,6 +210,13 @@ namespace DuoAssistant
             };
             // 双击托盘图标始终显示主窗口（不切换隐藏），最小化/关闭窗口才收回托盘
             _tray.MouseDoubleClick += (s, e) => ShowMain(-1);
+            // 点击「发现新版本」气泡直接走更新确认流程；其他气泡（启动/快速打印/队列）不触发
+            _tray.BalloonTipClicked += (s, e) =>
+            {
+                var pending = _pendingAutoUpdate;
+                _pendingAutoUpdate = null;
+                if (pending != null) Ui.Safe(this, () => ConfirmAndApplyUpdate(pending));
+            };
             _tray.BalloonTipTitle = Brand.Title;
             _tray.BalloonTipText = L10n.T("已启动，右键托盘图标可管理打印任务与文档服务。");
 
@@ -269,6 +278,7 @@ namespace DuoAssistant
                 var payload = new JObject { ["path"] = dlg.FileName }.ToString();
                 var res = JObject.Parse(CommandDispatcher.Execute("QueuePrint", payload));
                 var ok = res["code"]?.Value<int>() == 200;
+                _pendingAutoUpdate = null;
                 _tray.ShowBalloonTip(2500, L10n.T("快速打印"),
                     ok ? L10n.T("已加入打印队列：") + Path.GetFileName(dlg.FileName)
                        : L10n.T("失败：") + res["error"], ok ? ToolTipIcon.Info : ToolTipIcon.Error);
@@ -311,6 +321,51 @@ namespace DuoAssistant
             }
         }
 
+        /// <summary>
+        /// 自动检查更新的回调入口（来自后台线程）。只做轻量提示，不打断用户：
+        /// 弹托盘气泡，用户点击气泡才进入确认更新流程。
+        /// </summary>
+        public void OnAutoUpdateFound(UpdateInfo info)
+        {
+            if (info == null || !info.HasUpdate) return;
+            Ui.Safe(this, () =>
+            {
+                _pendingAutoUpdate = info;
+                try
+                {
+                    _tray?.ShowBalloonTip(8000, L10n.T("发现新版本"),
+                        L10n.F("发现新版本 {0}（当前 {1}），点击此处查看更新说明并安装。", info.Remote, info.Current),
+                        ToolTipIcon.Info);
+                }
+                catch (Exception ex) { Tools.Logger("自动更新提示失败: " + ex.Message); }
+            });
+        }
+
+        /// <summary>气泡点击 / 手动检查命中新版本后的确认与安装流程。</summary>
+        private void ConfirmAndApplyUpdate(UpdateInfo info)
+        {
+            var ok = MessageBox.Show(
+                L10n.F("发现新版本 {0}（当前 {1}）。是否立即更新？", info.Remote, info.Current),
+                L10n.T("自动更新"), MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+            if (ok != DialogResult.Yes) return;
+
+            var applyRes = JObject.Parse(CommandDispatcher.Execute("ApplyUpdate", "{}"));
+            if (applyRes["code"]?.Value<int>() == 200)
+            {
+                var exePath = applyRes["data"]?["exePath"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(exePath))
+                {
+                    try { Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true }); } catch { }
+                }
+                Application.Exit();
+            }
+            else
+            {
+                MessageBox.Show(L10n.T("更新失败：") + applyRes["error"], L10n.T("提示"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
         private void CheckForUpdate()
         {
             var res = JObject.Parse(CommandDispatcher.Execute("CheckUpdate", "{}"));
@@ -323,27 +378,12 @@ namespace DuoAssistant
             }
             if (data?["hasUpdate"]?.Value<bool>() == true)
             {
-                var ok = MessageBox.Show(
-                    L10n.F("发现新版本 {0}（当前 {1}）。是否立即更新？", data["remote"], data["current"]),
-                    L10n.T("自动更新"), MessageBoxButtons.YesNo, MessageBoxIcon.Information);
-                if (ok == DialogResult.Yes)
+                ConfirmAndApplyUpdate(new UpdateInfo
                 {
-                    var applyRes = JObject.Parse(CommandDispatcher.Execute("ApplyUpdate", "{}"));
-                    if (applyRes["code"]?.Value<int>() == 200)
-                    {
-                        var exePath = applyRes["data"]?["exePath"]?.ToString();
-                        if (!string.IsNullOrWhiteSpace(exePath))
-                        {
-                            try { Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true }); } catch { }
-                        }
-                        Application.Exit();
-                    }
-                    else
-                    {
-                        MessageBox.Show(L10n.T("更新失败：") + applyRes["error"], L10n.T("提示"),
-                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    }
-                }
+                    HasUpdate = true,
+                    Remote = data["remote"]?.ToString(),
+                    Current = data["current"]?.ToString()
+                });
             }
             else
             {
@@ -390,6 +430,7 @@ namespace DuoAssistant
             if (pending > _lastPendingCount && !_isShown)
             {
                 ShowMain(1);
+                _pendingAutoUpdate = null;
                 _tray?.ShowBalloonTip(2000, L10n.T("打印队列"),
                     L10n.F("新任务入队：{0} 个等待处理", pending), ToolTipIcon.Info);
             }

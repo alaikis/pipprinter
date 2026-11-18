@@ -36,6 +36,8 @@ namespace DuoAssistant.Views.Pages
         private readonly TextBox _whitelist = Ui.Input(520, true);
         private readonly TextBox _machineId = Ui.Input(520);
         private readonly TextBox _manifestUrl = Ui.Input(380);
+        private readonly CheckBox _autoCheckUpdate = new CheckBox { Text = "", AutoSize = true, Font = Ui.LabelFont };
+        private readonly NumericUpDown _autoCheckInterval = Ui.Number(1, 720, 6, 55);
         private readonly Label _updateStatus = Ui.Label("");
         private readonly Label _status = Ui.Label("");
         // AO（Active-Online Print）
@@ -61,6 +63,7 @@ namespace DuoAssistant.Views.Pages
             _autoStart.Text = L10n.T("开机自启");
             _recycle.Text = L10n.T("清理时移入回收站");
             _aoEnabled.Text = L10n.T("启用 AO 终端：");
+            _autoCheckUpdate.Text = L10n.T("自动检查新版本");
             _updateStatus.Text = L10n.T("尚未检查更新");
 
             var root = new FlowLayoutPanel
@@ -139,6 +142,9 @@ namespace DuoAssistant.Views.Pages
 
             root.Controls.Add(Ui.Label(L10n.T("自动更新（Gitee）"), true));
             root.Controls.Add(Row(Ui.Label(L10n.T("更新清单 URL：")), _manifestUrl));
+            root.Controls.Add(Row(_autoCheckUpdate,
+                Ui.Label(L10n.T("检查间隔（小时）：")), _autoCheckInterval));
+            root.Controls.Add(Ui.Label(L10n.T("启用后：启动延迟约 30 秒检查一次，之后按间隔在后台检查；发现新版本仅托盘提示，不自动下载或打断操作。"), false));
             root.Controls.Add(Row(Ui.Button(L10n.T("检查更新"), (s, e) => CheckUpdate()), _updateStatus));
 
             root.Controls.Add(Row(
@@ -199,6 +205,9 @@ namespace DuoAssistant.Views.Pages
             _recycle.Checked = s.UseRecycleBin;
             _whitelist.Text = string.Join(Environment.NewLine, s.CleanWhitelist ?? new System.Collections.Generic.List<string>());
             _manifestUrl.Text = s.UpdateManifestUrl;
+            _autoCheckUpdate.Checked = s.AutoCheckUpdate;
+            _autoCheckInterval.Value = Math.Min(_autoCheckInterval.Maximum,
+                Math.Max(1, s.AutoCheckIntervalHours > 0 ? s.AutoCheckIntervalHours : 6));
             _machineId.Text = s.MachineId;
             _aoEnabled.Checked = s.AoEnabled;
             _aoWasEnabled = s.AoEnabled;
@@ -266,6 +275,8 @@ namespace DuoAssistant.Views.Pages
                 ["useRecycleBin"] = _recycle.Checked,
                 ["cleanWhitelist"] = list,
                 ["updateManifestUrl"] = _manifestUrl.Text.Trim(),
+                ["autoCheckUpdate"] = _autoCheckUpdate.Checked,
+                ["autoCheckIntervalHours"] = (int)_autoCheckInterval.Value,
                 ["language"] = language,
                 ["aoEnabled"] = _aoEnabled.Checked,
                 ["aoRelayUrl"] = _aoRelayUrl.Text.Trim(),
@@ -275,6 +286,8 @@ namespace DuoAssistant.Views.Pages
             var langChanged = _lastSavedLanguage != null && _lastSavedLanguage != language;
             var res = JObject.Parse(CommandDispatcher.Execute("SaveSettings", payload.ToString()));
             CommandDispatcher.ResetCache();
+            // 自动更新检查的开关/间隔立即生效，无需重启
+            if (res["code"]?.Value<int>() == 200) AutoUpdateService.Instance.Reconfigure();
             // AO 启用状态变更立即生效，无需重启（Start 幂等，Stop 安全）
             if (_aoEnabled.Checked != _aoWasEnabled)
             {

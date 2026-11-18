@@ -94,12 +94,21 @@ namespace DuoAssistant
             _home = new Home();
             if (showUi) _home.ShowMain(-1);
 
+            // 自动检查更新：启动延迟一次 + 后台按间隔定时；只提示不自动下载。
+            // 回调在后台线程触发，由 Home 内部切回 UI 线程弹托盘气泡。
+            try
+            {
+                AutoUpdateService.Instance.Start(info => _home?.OnAutoUpdateFound(info));
+            }
+            catch (Exception ex) { Utils.Tools.Logger("启动自动检查更新失败: " + ex.Message); }
+
             try
             {
                 Application.Run();
             }
             finally
             {
+                AutoUpdateService.Instance.Stop();
                 _web?.StopAsync().GetAwaiter().GetResult();
                 _ws?.Stop();
                 _ao.Stop();

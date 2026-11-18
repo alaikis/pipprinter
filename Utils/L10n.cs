@@ -227,8 +227,16 @@ namespace DuoAssistant.Utils
             ["检查失败："] = "Check failed: ",
             ["检查更新失败："] = "Update check failed: ",
             ["检查更新异常："] = "Update check error: ",
+            ["发现新版本"] = "New version available",
             ["发现新版本 {0}（当前 {1}）"] = "New version {0} available (current {1})",
             ["发现新版本 {0}（当前 {1}）。是否立即更新？"] = "New version {0} (current {1}). Update now?",
+            ["发现新版本 {0}（当前 {1}），点击此处查看更新说明并安装。"] =
+                "New version {0} available (current {1}). Click here to review and install.",
+            ["自动检查新版本"] = "Auto-check for updates",
+            ["检查间隔（小时）："] = "Check interval (hours): ",
+            ["启用后：启动延迟约 30 秒检查一次，之后按间隔在后台检查；发现新版本仅托盘提示，不自动下载或打断操作。"] =
+                "When enabled: checks once ~30s after startup, then at the set interval in the background. " +
+                "A new version only shows a tray notification — no automatic download, no interruption.",
             ["发现新版本 {0}。是否立即下载并安装？\n（旧程序文件会自动让位备份，可手动还原）"] =
                 "New version {0} found. Download and install now?\n(The old program file will be renamed as backup and can be restored manually)",
             ["正在下载并安装…"] = "Downloading and installing…",
