@@ -10,6 +10,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using DuoAssistant.Utils;
 using Newtonsoft.Json;
@@ -59,7 +60,7 @@ namespace DuoAssistant.Services
         /// - https://gitee.com/{owner}/{repo}/releases/latest（页地址）：
         ///   调 API v5 /repos/{owner}/{repo}/releases/latest，取 assets 里 latest.json 的 browser_download_url
         /// </summary>
-        private static async Task<string> ResolveManifestUrlAsync(string configured)
+        private static async Task<string> ResolveManifestUrlAsync(string configured, CancellationToken cancellationToken = default)
         {
             if (configured.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                 return configured;
@@ -71,7 +72,7 @@ namespace DuoAssistant.Services
 
             var api = string.Format("https://gitee.com/api/v5/repos/{0}/{1}/releases/latest",
                 m.Groups[1].Value, m.Groups[2].Value);
-            var json = await Http.GetStringAsync(api).ConfigureAwait(false);
+            var json = await Http.GetStringAsync(api, cancellationToken).ConfigureAwait(false);
             var rel = JObject.Parse(json);
             var asset = (rel["assets"] as JArray)?
                 .FirstOrDefault(a => string.Equals(a["name"]?.ToString(), "latest.json",
@@ -82,8 +83,8 @@ namespace DuoAssistant.Services
             return url;
         }
 
-        /// <summary>拉取清单 + 比对当前版本，返回 UpdateInfo。不实际下载。</summary>
-        public async Task<UpdateInfo> CheckUpdateAsync()
+        /// <summary>拉取清单 + 比对当前版本，返回 UpdateInfo。不实际下载。可传 token 限制后台检查耗时。</summary>
+        public async Task<UpdateInfo> CheckUpdateAsync(CancellationToken cancellationToken = default)
         {
             var s = SettingsStore.Instance.Current;
             if (string.IsNullOrWhiteSpace(s.UpdateManifestUrl))
@@ -93,8 +94,8 @@ namespace DuoAssistant.Services
             {
                 Http.DefaultRequestHeaders.Accept.Clear();
                 Http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                manifestUrl = await ResolveManifestUrlAsync(s.UpdateManifestUrl).ConfigureAwait(false);
-                var json = await Http.GetStringAsync(manifestUrl).ConfigureAwait(false);
+                manifestUrl = await ResolveManifestUrlAsync(s.UpdateManifestUrl, cancellationToken).ConfigureAwait(false);
+                var json = await Http.GetStringAsync(manifestUrl, cancellationToken).ConfigureAwait(false);
                 var manifest = JsonConvert.DeserializeObject<UpdateManifest>(json);
                 if (manifest == null || string.IsNullOrWhiteSpace(manifest.Version))
                     return new UpdateInfo
@@ -123,8 +124,42 @@ namespace DuoAssistant.Services
             catch (Exception ex)
             {
                 Tools.Logger("CheckUpdate 失败: " + ex.Message);
-                return new UpdateInfo { HasUpdate = false, Error = ex.Message, Url = manifestUrl ?? s.UpdateManifestUrl };
+                return new UpdateInfo
+                {
+                    HasUpdate = false,
+                    Error = ex.Message,
+                    Url = manifestUrl ?? s.UpdateManifestUrl,
+                    NetworkError = IsNetworkFailure(ex)
+                };
             }
+        }
+
+        /// <summary>
+        /// 区分「网络/主机不可达」与「清单内容错误」，仅供自动检查退避使用。
+        /// 4xx（清单地址错、资源不存在）重试无益，不算网络故障；5xx/无状态码按暂时性故障处理。
+        /// </summary>
+        private static bool IsNetworkFailure(Exception ex)
+        {
+            if (ex == null) return false;
+            if (ex is AggregateException agg)
+            {
+                foreach (var inner in agg.Flatten().InnerExceptions)
+                    if (IsNetworkFailure(inner)) return true;
+                return false;
+            }
+            if (ex is OperationCanceledException) return true; // 含后台检查超时
+            if (ex is System.Net.Sockets.SocketException) return true;
+            if (ex is System.Net.WebException) return true;
+            if (ex is HttpRequestException hre)
+            {
+                if (hre.StatusCode.HasValue)
+                {
+                    var code = (int)hre.StatusCode.Value;
+                    return code == 408 || code == 429 || code >= 500;
+                }
+                return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -322,5 +357,8 @@ namespace DuoAssistant.Services
         public string Error { get; set; }
         public string BackupPath { get; set; }
         public string ExePath { get; set; }
+        /// <summary>网络/主机不可达标记，仅用于自动检查退避；不进入 REST 响应。</summary>
+        [JsonIgnore]
+        public bool NetworkError { get; set; }
     }
 }
