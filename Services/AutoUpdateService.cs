@@ -3,6 +3,7 @@
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
 using System;
+using System.Net.NetworkInformation;
 using System.Threading;
 using System.Threading.Tasks;
 using DuoAssistant.Utils;
@@ -86,6 +87,14 @@ namespace DuoAssistant.Services
                 var s = SettingsStore.Instance.Current;
                 if (!s.AutoCheckUpdate) return;
 
+                // 离线时直接跳过，不发起任何网络请求（GetIsNetworkAvailable 只查本地网卡状态，
+                // 本身不产生流量）。避免断网/飞行模式下定时器反复唤醒带来的无效请求与资源占用。
+                if (!IsOnline())
+                {
+                    Tools.Logger("自动检查更新：当前离线，已跳过");
+                    return;
+                }
+
                 var info = await new UpdateService().CheckUpdateAsync().ConfigureAwait(false);
                 if (info == null || !info.HasUpdate || string.IsNullOrWhiteSpace(info.Remote)) return;
 
@@ -107,6 +116,32 @@ namespace DuoAssistant.Services
             finally
             {
                 Interlocked.Exchange(ref _checking, 0);
+            }
+        }
+
+        /// <summary>
+        /// 是否在线：只查本地网卡状态，不发任何网络包，零流量开销。
+        /// GetIsNetworkAvailable 在装有虚拟网卡（Docker/VMware）且物理断网时可能误报在线，
+        /// 因此额外要求至少有一个「非环回、已启用、已连接」的网卡，避免离线时仍发更新请求。
+        /// </summary>
+        private static bool IsOnline()
+        {
+            if (!NetworkInterface.GetIsNetworkAvailable()) return false;
+            try
+            {
+                foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                    if (ni.OperationalStatus == OperationalStatus.Up &&
+                        ni.NetworkInterfaceType != NetworkInterfaceType.Unknown)
+                        return true;
+                }
+                return false;
+            }
+            catch
+            {
+                // 枚举失败时保守按 GetIsNetworkAvailable 的结果处理
+                return true;
             }
         }
     }
