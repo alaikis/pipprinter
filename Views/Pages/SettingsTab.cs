@@ -144,7 +144,7 @@ namespace DuoAssistant.Views.Pages
             root.Controls.Add(Row(Ui.Label(L10n.T("更新清单 URL：")), _manifestUrl));
             root.Controls.Add(Row(_autoCheckUpdate,
                 Ui.Label(L10n.T("检查间隔（小时）：")), _autoCheckInterval));
-            root.Controls.Add(Ui.Label(L10n.T("启用后：启动延迟约 30 秒检查一次，之后按间隔在后台检查；发现新版本仅托盘提示，不自动下载或打断操作。离线时自动跳过，不占用网络。"), false));
+            root.Controls.Add(Ui.Label(L10n.T("启用后：启动延迟约 30 秒检查一次，之后按间隔在后台检查；发现新版本仅托盘提示，不自动下载或打断操作。离线或更新服务不可达时不发请求，网络恢复后自动补查。"), false));
             root.Controls.Add(Row(Ui.Button(L10n.T("检查更新"), (s, e) => CheckUpdate()), _updateStatus));
 
             root.Controls.Add(Row(
