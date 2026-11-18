@@ -234,9 +234,10 @@ namespace DuoAssistant.Utils
                 "New version {0} available (current {1}). Click here to review and install.",
             ["自动检查新版本"] = "Auto-check for updates",
             ["检查间隔（小时）："] = "Check interval (hours): ",
-            ["启用后：启动延迟约 30 秒检查一次，之后按间隔在后台检查；发现新版本仅托盘提示，不自动下载或打断操作。"] =
+            ["启用后：启动延迟约 30 秒检查一次，之后按间隔在后台检查；发现新版本仅托盘提示，不自动下载或打断操作。离线时自动跳过，不占用网络。"] =
                 "When enabled: checks once ~30s after startup, then at the set interval in the background. " +
-                "A new version only shows a tray notification — no automatic download, no interruption.",
+                "A new version only shows a tray notification — no automatic download, no interruption. " +
+                "Skipped automatically when offline — no network usage.",
             ["发现新版本 {0}。是否立即下载并安装？\n（旧程序文件会自动让位备份，可手动还原）"] =
                 "New version {0} found. Download and install now?\n(The old program file will be renamed as backup and can be restored manually)",
             ["正在下载并安装…"] = "Downloading and installing…",
