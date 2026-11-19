@@ -161,6 +161,28 @@ namespace DuoAssistant.Utils
             ["网络打印机直发（本机无需驱动）：选文件后自动识别 631/IPP 或 9100/RAW"] =
                 "Direct network print (no driver needed on this PC): after picking a file, auto-detects 631/IPP or 9100/RAW",
 
+            // ---- 别名（slug）与打印审计 ----
+            ["存为别名"] = "Save as alias",
+            ["刷新别名"] = "Refresh aliases",
+            ["打印审计"] = "Print audit",
+            ["别名"] = "Alias",
+            ["目标"] = "Target",
+            ["模式"] = "Mode",
+            ["备注"] = "Note",
+            ["请先在扫描结果中选中一台带地址的网络打印机，再存为别名。"] =
+                "Please select a network printer with an address from the scan results first, then save it as an alias.",
+            ["设备 {0}（{1}）的别名："] = "Alias for device {0} ({1}):",
+            ["保存"] = "Save",
+            ["保存失败"] = "Save failed",
+            ["别名「{0}」已保存（{1}）"] = "Alias \"{0}\" saved ({1})",
+            ["别名共 {0} 条：把 host:port 等复杂目标藏在一个友好名称后，打印入口统一智能调度。"] =
+                "{0} aliases: each hides a host:port target behind a friendly name; print entry points dispatch intelligently.",
+            ["别名（slug）：把 host:port 等复杂目标藏在一个友好名称后，打印入口统一智能调度。"] =
+                "Aliases (slug): each hides a host:port target behind a friendly name; print entry points dispatch intelligently.",
+            ["最近 {0} 条打印审计（本机）："] = "Last {0} print audit events (local):",
+            ["（暂无记录）"] = "(no records)",
+            ["发送成功"] = "Sent successfully",
+
             // ---- 磁盘清理页 ----
             ["大小"] = "Size",
             ["最后修改"] = "Last modified",

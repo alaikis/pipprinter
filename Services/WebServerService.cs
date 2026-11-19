@@ -241,6 +241,47 @@ namespace DuoAssistant.Services
                 return Json(CommandDispatcher.Execute("PrintToIp", body));
             });
 
+            // 打印机别名（slug）管理：GET 列出 / POST 新增或覆盖 / DELETE 删除。
+            // 别名把 host:port 等复杂目标藏在一个友好名称后，打印入口统一智能调度。
+            app.MapGet("/api/print-slugs", () => Json(CommandDispatcher.Execute("ListPrintSlugs", "{}")));
+            app.MapPost("/api/print-slugs", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("AddPrinterSlug", body));
+            });
+            app.MapDelete("/api/print-slugs", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("RemovePrinterSlug", body));
+            });
+
+            // 打印审计：GET 查询本机直发/打印流水（?host=&fromTs=&toTs=&ok=&limit=）；
+            // POST /archive 归档旧流水（body {keepDays}，0=清空）。
+            app.MapGet("/api/print-events", async (HttpContext ctx) =>
+            {
+                var q = ctx.Request.Query;
+                var body = new JObject
+                {
+                    ["host"] = q["host"].ToString(),
+                    ["fromTs"] = long.TryParse(q["fromTs"], out var f) ? f : 0,
+                    ["toTs"] = long.TryParse(q["toTs"], out var t) ? t : 0,
+                    ["ok"] = q.ContainsKey("ok") ? (q["ok"].ToString() == "true" ? true : false) : null,
+                    ["limit"] = int.TryParse(q["limit"], out var l) ? l : 100
+                };
+                return Json(CommandDispatcher.Execute("ListPrintEvents", body.ToString()));
+            });
+            app.MapPost("/api/print-events/archive", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("ArchivePrintEvents", body));
+            });
+
             app.MapPost("/api/clean/scan", async (HttpContext ctx) =>
             {
                 string body;

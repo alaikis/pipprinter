@@ -26,6 +26,9 @@ namespace DuoAssistant.Views.Pages
         private TextBox _subnetInput;
         private Button _scanButton;
         private volatile bool _scanning;
+        private readonly ListView _slugList = Ui.List(
+            L10n.T("别名"), L10n.T("目标"), L10n.T("模式"), L10n.T("备注"));
+        private readonly Label _slugInfo = Ui.Label("", true);
 
         public PrintersTab()
         {
@@ -43,7 +46,11 @@ namespace DuoAssistant.Views.Pages
             _scanList.Columns[3].Width = 90;
             _scanList.Columns[4].Width = 90;
             _scanList.Columns[5].Width = 220;
-            _scanInfo.Dock = DockStyle.Top;
+            _slugList.Columns[0].Width = 160;
+            _slugList.Columns[1].Width = 260;
+            _slugList.Columns[2].Width = 80;
+            _slugList.Columns[3].Width = 300;
+            _slugInfo.Dock = DockStyle.Top;
 
             _scanButton = Ui.Button(L10n.T("扫描局域网"), (s, e) => ScanLan(), 110, primary: true);
             // 网段输入框：留空时只做被动发现；填写后追加 active 端口探测。
@@ -58,6 +65,9 @@ namespace DuoAssistant.Views.Pages
                 Ui.Button(L10n.T("设为默认"), (s, e) => SetDefault(), 100),
                 Ui.Button(L10n.T("打印测试页"), (s, e) => TestPage(), 110),
                 Ui.Button(L10n.T("打印到此设备"), (s, e) => PrintToSelectedDevice(), 110),
+                Ui.Button(L10n.T("存为别名"), (s, e) => SaveAsSlug(), 100),
+                Ui.Button(L10n.T("刷新别名"), (s, e) => RefreshSlugs(), 100),
+                Ui.Button(L10n.T("打印审计"), (s, e) => ShowPrintEvents(), 100),
                 Ui.Button(L10n.T("打开文档"), (s, e) => System.Diagnostics.Process.Start(
                     new System.Diagnostics.ProcessStartInfo(Program.DocsUrl) { UseShellExecute = true }), 100),
                 _info);
@@ -70,6 +80,10 @@ namespace DuoAssistant.Views.Pages
             var localPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0) };
             localPanel.Controls.Add(_list);
 
+            var slugPanel = new Panel { Dock = DockStyle.Top, Height = 150, Padding = new Padding(0, 4, 0, 0) };
+            slugPanel.Controls.Add(_slugList);
+            slugPanel.Controls.Add(_slugInfo);
+
             var split = new SplitContainer
             {
                 Dock = DockStyle.Fill,
@@ -80,6 +94,7 @@ namespace DuoAssistant.Views.Pages
             split.Panel1.BackColor = Theme.Card;
             split.Panel2.BackColor = Theme.Card;
             split.Panel1.Controls.Add(scanPanel);
+            split.Panel2.Controls.Add(slugPanel);
             split.Panel2.Controls.Add(localPanel);
 
             var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12) };
@@ -88,7 +103,9 @@ namespace DuoAssistant.Views.Pages
             Controls.Add(root);
 
             _scanInfo.Text = L10n.T("扫描结果仅用于识别设备；如需使用请在 Windows 中添加为网络打印机并安装厂商驱动。");
+            _slugInfo.Text = L10n.T("别名（slug）：把 host:port 等复杂目标藏在一个友好名称后，打印入口统一智能调度。");
             RefreshData();
+            RefreshSlugs();
         }
 
         public void RefreshData()
@@ -285,6 +302,129 @@ namespace DuoAssistant.Views.Pages
                 var msg = res["data"]?["message"]?.ToString() ?? L10n.T("已发送");
                 MessageBox.Show($"{L10n.T("已发送到此设备")} {ip}\n{engine}\n{msg}",
                     L10n.T("打印到此设备"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        /// <summary>把当前选中扫描出的网络打印机（ip:port）存为一条别名，供后续按友好名称打印。</summary>
+        private void SaveAsSlug()
+        {
+            var item = _scanList.SelectedItems.Count > 0 ? _scanList.SelectedItems[0] : null;
+            var ip = item?.Tag as string; // 扫描行存的是 ip:port
+            if (string.IsNullOrEmpty(ip))
+            {
+                MessageBox.Show(L10n.T("请先在扫描结果中选中一台带地址的网络打印机，再存为别名。"),
+                    L10n.T("提示"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var model = item.SubItems.Count > 5 ? item.SubItems[5].Text : "";
+            using (var dlg = new InputDialog(L10n.T("存为别名"), L10n.F("设备 {0}（{1}）的别名：", ip, model), ip))
+            {
+                if (dlg.ShowDialog() != DialogResult.OK || string.IsNullOrWhiteSpace(dlg.Value)) return;
+                var args = new JObject
+                {
+                    ["slug"] = dlg.Value.Trim(),
+                    ["target"] = ip,
+                    ["mode"] = "auto",
+                    ["note"] = model
+                }.ToString();
+                var res = JObject.Parse(CommandDispatcher.Execute("AddPrinterSlug", args));
+                if (res["code"]?.Value<int>() != 200)
+                {
+                    MessageBox.Show(res["error"]?.ToString(), L10n.T("保存失败"),
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                RefreshSlugs();
+                _slugInfo.Text = L10n.F("别名「{0}」已保存（{1}）", dlg.Value.Trim(), ip);
+            }
+        }
+
+        /// <summary>刷新别名列表（从本地 netprint-slug.json）。</summary>
+        private void RefreshSlugs()
+        {
+            try
+            {
+                var res = JObject.Parse(CommandDispatcher.Execute("ListPrintSlugs", "{}"));
+                if (res["code"]?.Value<int>() != 200) { _slugList.Items.Clear(); return; }
+                var list = res["data"]?["list"] as JArray ?? new JArray();
+                _slugList.BeginUpdate();
+                _slugList.Items.Clear();
+                foreach (var s in list)
+                {
+                    var item = new ListViewItem(s["Slug"]?.ToString() ?? "");
+                    item.SubItems.Add(s["Target"]?.ToString() ?? "");
+                    item.SubItems.Add(s["Mode"]?.ToString() ?? "auto");
+                    item.SubItems.Add(s["Note"]?.ToString() ?? "");
+                    _slugList.Items.Add(item);
+                }
+                _slugList.EndUpdate();
+                _slugInfo.Text = L10n.F("别名共 {0} 条：把 host:port 等复杂目标藏在一个友好名称后，打印入口统一智能调度。", list.Count);
+            }
+            catch { _slugList.Items.Clear(); }
+        }
+
+        /// <summary>查看最近的本机打印审计流水（SQLite）。</summary>
+        private void ShowPrintEvents()
+        {
+            try
+            {
+                var res = JObject.Parse(CommandDispatcher.Execute("ListPrintEvents",
+                    new JObject { ["limit"] = 200 }.ToString()));
+                if (res["code"]?.Value<int>() != 200)
+                {
+                    MessageBox.Show(res["error"]?.ToString(), L10n.T("打印审计"),
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                var events = res["data"]?["events"] as JArray ?? new JArray();
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine(L10n.F("最近 {0} 条打印审计（本机）：", events.Count));
+                sb.AppendLine(new System.Text.StringBuilder("时间      host           通道     份  字节   结果  ").ToString());
+                foreach (var ev in events)
+                {
+                    var ts = ev["Ts"]?.Value<long>() ?? 0;
+                    var dt = ts > 0 ? DateTime.UnixEpoch.AddSeconds(ts).ToLocalTime().ToString("MM-dd HH:mm:ss") : "-";
+                    sb.AppendLine(string.Format("{0}  {1,-13} {2,-8} {3,3} {4,6}  {5}",
+                        dt,
+                        ev["Host"]?.ToString() ?? "",
+                        ev["Engine"]?.ToString() ?? "",
+                        ev["Copies"]?.ToString() ?? "1",
+                        ev["Bytes"]?.ToString() ?? "0",
+                        ev["Ok"]?.Value<bool>() == true ? "OK" : "FAIL"));
+                    var detail = ev["Detail"]?.ToString();
+                    if (!string.IsNullOrEmpty(detail)) sb.AppendLine("        ↳ " + detail);
+                }
+                if (events.Count == 0) sb.AppendLine(L10n.T("（暂无记录）"));
+                MessageBox.Show(sb.ToString(), L10n.T("打印审计"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, L10n.T("打印审计"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        /// <summary>简易输入框对话框（用于给别名取名）。</summary>
+        private sealed class InputDialog : Form
+        {
+            public string Value { get; private set; }
+            private readonly TextBox _box;
+            public InputDialog(string title, string prompt, string initial)
+            {
+                Text = title;
+                Width = 360; Height = 150;
+                FormBorderStyle = FormBorderStyle.FixedDialog;
+                StartPosition = FormStartPosition.CenterParent;
+                var lbl = new Label { Text = prompt, AutoSize = true, Location = new System.Drawing.Point(14, 12) };
+                _box = new TextBox { Text = initial, Location = new System.Drawing.Point(14, 44), Width = 318 };
+                var ok = new Button { Text = L10n.T("保存"), Location = new System.Drawing.Point(214, 76), Width = 70 };
+                var cancel = new Button { Text = L10n.T("取消"), Location = new System.Drawing.Point(294, 76), Width = 60 };
+                ok.Click += (s, e) => { Value = _box.Text.Trim(); DialogResult = DialogResult.OK; Close(); };
+                cancel.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
+                Controls.AddRange(new Control[] { lbl, _box, ok, cancel });
+                AcceptButton = ok;
+                CancelButton = cancel;
             }
         }
     }

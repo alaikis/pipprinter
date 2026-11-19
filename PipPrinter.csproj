@@ -21,9 +21,9 @@
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <!-- 版本规范 vMAJOR.FEATURE.PATCH：补丁版递增 PATCH(001→002)，大变更递增 FEATURE(1.01.000)，重大重构递增 MAJOR -->
-    <Version>1.01.008</Version>
-    <AssemblyVersion>1.1.0.8</AssemblyVersion>
-    <FileVersion>1.1.0.8</FileVersion>
+    <Version>1.01.009</Version>
+    <AssemblyVersion>1.1.0.9</AssemblyVersion>
+    <FileVersion>1.1.0.9</FileVersion>
     <Product>Lychee Printing Assistant</Product>
     <Description>Lychee Printing Assistant / 荔枝打印助手 — 托盘常驻的本地打印助手</Description>
     <!-- exe 文件图标（资源管理器/桌面/任务栏显示） -->
@@ -70,6 +70,15 @@
       2) 其 10.0.0 版本强制依赖 log4net >= 3.3.0，与本项目 log4net 2.x 冲突；
       3) 8.0.0 会把 ASP.NET Core 8 程序集带入 net10 应用，存在版本冲突风险。
     -->
+    <!--
+      打印审计（SQLite）：大型物流中心场景下，网络直发流水量大，用本地 SQLite 存 print_events，
+      可检索、可归档。Microsoft.Data.Sqlite 8.x 随 .NET 共享框架生态，自包含发布时需把
+      SQLitePCLRaw 的 native 库随包携带（见下方 SQLitePCLRaw.bundle_e_sqlite3 强制包含 native）。
+    -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.1" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.6">
+      <Private>true</Private>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>

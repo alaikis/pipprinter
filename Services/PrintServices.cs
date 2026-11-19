@@ -107,19 +107,51 @@ namespace DuoAssistant.Services
                 var target = ResolveTarget(dt);
                 if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 target 字段");
                 var job = BuildJob(dt, target);
-                var outcome = _extended.Print(job);
+                // 统一把 printer 字段（友好别名 / host:port / 本机打印机名）解析成明确通道
+                var resolved = SlugResolver.Resolve(job.Printer);
+                var outcome = resolved.Channel == "Net"
+                    ? PrintNetwork(resolved.Printer, job)
+                    : _extended.Print(job);
+                // 网络直发通道记一条打印审计流水（本机工位机），成功/失败都记，供对账排障
+                if (resolved.Channel == "Net")
+                {
+                    try { PrintEventStore.Record(resolved.Printer, outcome.Engine, 0, job.Copies,
+                        outcome.Ok, outcome.Ok ? outcome.Message : (outcome.Detail ?? outcome.Message)); }
+                    catch { /* 审计失败不影响主流程 */ }
+                }
                 if (!outcome.Ok)
                     return Result.error(outcome.Message, cmd: "PrintFile", data: new { detail = outcome.Detail });
                 return Result.success(data: new
                 {
-                    path = target, printer = job.Printer, engine = EngineCategory(outcome.Engine),
-                    message = outcome.Message, supportedTypes = PrintFileTypes.All
+                    path = target,
+                    printer = job.Printer,
+                    channel = resolved.Channel,
+                    slug = resolved.FromSlug ? resolved.Slug : null,
+                    resolve = resolved.Detail,
+                    engine = EngineCategory(outcome.Engine),
+                    message = outcome.Message,
+                    supportedTypes = PrintFileTypes.All
                 }, cmd: "PrintFile", msg: outcome.Message);
             }
             catch (Exception ex)
             {
                 return Result.error(ex.Message, cmd: "PrintFile");
             }
+        }
+
+        /// <summary>网络直发：把 job 渲染成 PDF 字节，交给 NetPrinterService 按 host:port 发（免驱动）。</summary>
+        private PrintOutcome PrintNetwork(string host, PrintJob job)
+        {
+            var net = new NetPrinterService();
+            var pdf = net.ToPdfBytes(job, _extended, out var renderedFrom);
+            if (pdf == null)
+                return new PrintOutcome
+                {
+                    Ok = false, Engine = "Net",
+                    Message = "该文件类型无法渲染为 PDF，不能走网络直发：" + Path.GetExtension(job.Target),
+                    Detail = "请改用已安装驱动的本机打印机，或先转成 PDF 再发"
+                };
+            return net.PrintSmart(host, pdf, job.Copies);
         }
 
 
@@ -641,11 +673,20 @@ namespace DuoAssistant.Services
                 job.Printer = ""; // 网络直发不占本机打印机名
                 var bytes = new NetPrinterService().ToPdfBytes(job, _extended, out var renderedFrom);
                 if (bytes == null)
+                {
+                    // 渲染失败也记一条审计（ok=false，engine=Render），便于排障「哪台打没打出去」
+                    try { PrintEventStore.Record(ip, "Render", 0, copies, false,
+                        "无法渲染为 PDF：" + Path.GetExtension(target)); } catch { }
                     return Result.error("该文件类型无法渲染为 PDF，不能网络直发：" +
                         Path.GetExtension(target), 400, cmd,
                         data: new { hint = "请改用已安装驱动的本机打印机，或先转成 PDF 再发" });
+                }
 
                 var outcome = new NetPrinterService().PrintSmart(ip, bytes, copies);
+                // 打印审计：无论成败都记一条本机直发流水（host/engine/bytes/copies/ok/detail），供对账排障
+                try { PrintEventStore.Record(ip, outcome.Engine, bytes.Length, copies, outcome.Ok,
+                    outcome.Ok ? outcome.Message : (outcome.Detail ?? outcome.Message)); } catch { /* 审计失败不影响主流程 */ }
+
                 if (!outcome.Ok)
                     return Result.error(outcome.Message, 502, cmd,
                         data: new { ip, engine = outcome.Engine, detail = outcome.Detail });
@@ -663,6 +704,139 @@ namespace DuoAssistant.Services
             catch (Exception ex)
             {
                 return Result.error(ex.Message, 502, cmd);
+            }
+        }
+
+        /// <summary>
+        /// 别名（slug）管理：把复杂目标 + 协议藏到一个友好名称后面，供打印入口统一智能调度。
+        /// 纯本地 JSON 配置，不碰系统、不注册 Windows 打印机、不装驱动。
+        /// 参数：slug（必填，友好名）；target（host:port / 裸 IP / 本机打印机驱动名 / 留空走默认）；
+        ///       mode（可选 auto/ipp/raw/driver）；note（可选备注）。
+        /// </summary>
+        public string AddPrinterSlug(string args)
+        {
+            const string cmd = "AddPrinterSlug";
+            try
+            {
+                var dt = ParseObject(args);
+                var slug = Str(dt, "slug");
+                if (string.IsNullOrWhiteSpace(slug))
+                    return Result.error("缺少 slug 字段（别名本体，如「前台打印机」）", 400, cmd);
+                var target = Str(dt, "target");
+                var mode = Str(dt, "mode") ?? "auto";
+                var note = Str(dt, "note");
+
+                var entry = new PrinterSlugEntry
+                {
+                    Slug = slug.Trim(),
+                    Target = target ?? "",
+                    Mode = mode ?? "auto",
+                    Note = note ?? ""
+                };
+                var saved = PrinterSlugStore.Upsert(entry);
+                return Result.success(data: new { slug = saved.Slug, target = saved.Target, mode = saved.Mode, note = saved.Note },
+                    cmd: cmd, msg: "别名已保存");
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: cmd);
+            }
+        }
+
+        /// <summary>删除某条别名。参数：slug。</summary>
+        public string RemovePrinterSlug(string args)
+        {
+            const string cmd = "RemovePrinterSlug";
+            try
+            {
+                var dt = ParseObject(args);
+                var slug = Str(dt, "slug");
+                if (string.IsNullOrWhiteSpace(slug))
+                    return Result.error("缺少 slug 字段", 400, cmd);
+                var ok = PrinterSlugStore.Remove(slug);
+                if (!ok)
+                    return Result.error("该别名不存在: " + slug, 404, cmd);
+                return Result.success(data: new { slug }, cmd: cmd, msg: "别名已删除");
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: cmd);
+            }
+        }
+
+        /// <summary>
+        /// 列出全部别名（供对接方查看有哪些「打印机名」可用，以及别名 → 目标的映射）。
+        /// 可选按 slug 精确查一条：参数 slug 命中则只返回它；否则返回全部。
+        /// </summary>
+        public string ListPrintSlugs(string args)
+        {
+            const string cmd = "ListPrintSlugs";
+            try
+            {
+                var dt = ParseObject(args);
+                var one = Str(dt, "slug");
+                if (!string.IsNullOrWhiteSpace(one))
+                {
+                    var e = PrinterSlugStore.Get(one);
+                    if (e == null)
+                        return Result.error("该别名不存在: " + one, 404, cmd);
+                    return Result.success(data: new { list = new[] { e } }, cmd: cmd);
+                }
+                var all = PrinterSlugStore.List();
+                return Result.success(data: new { count = all.Count, list = all }, cmd: cmd);
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: cmd);
+            }
+        }
+
+        // ------------------------------------------------------------ 打印审计（SQLite）
+
+        /// <summary>
+        /// 打印审计查询：按 host（设备/工位）/ 时间范围 / 成功与否检索直发流水，供运营对账与排障。
+        /// 参数：host（可选，按设备过滤）、fromTs / toTs（Unix 秒，可选）、ok（true/false，可选）、limit（默认 100，最大 1000）。
+        /// 仅查本机工位机记录的流水，不上传、不外发。
+        /// </summary>
+        public string ListPrintEvents(string args)
+        {
+            const string cmd = "ListPrintEvents";
+            try
+            {
+                var dt = ParseObject(args);
+                var host = Str(dt, "host");
+                long fromTs = 0, toTs = 0;
+                if (dt["fromTs"] != null) fromTs = dt["fromTs"].Value<long>();
+                if (dt["toTs"] != null) toTs = dt["toTs"].Value<long>();
+                bool? ok = dt["ok"] != null ? (bool?)dt["ok"] : (bool?)null;
+                var limit = Math.Max(1, Math.Min(1000, Int(dt, "limit", 100)));
+
+                var rows = PrintEventStore.Query(host, fromTs, toTs, ok, limit);
+                return Result.success(data: new { count = rows.Count, events = rows }, cmd: cmd);
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: cmd);
+            }
+        }
+
+        /// <summary>
+        /// 归档打印流水：删除超过 keepDays 的旧事件，控制 SQLite 体积（大型物流中心长期运行必需）。
+        /// 参数：keepDays（默认 30，0 表示清空全部；1-365 之间）。返回删除条数。
+        /// </summary>
+        public string ArchivePrintEvents(string args)
+        {
+            const string cmd = "ArchivePrintEvents";
+            try
+            {
+                var dt = ParseObject(args);
+                var keepDays = Math.Max(0, Math.Min(365, Int(dt, "keepDays", 30)));
+                var deleted = PrintEventStore.Archive(keepDays);
+                return Result.success(data: new { keepDays, deleted }, cmd: cmd, msg: "归档完成");
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: cmd);
             }
         }
 
