@@ -23,6 +23,7 @@ namespace DuoAssistant.Views.Pages
             L10n.T("协议"), L10n.T("型号"));
         private readonly Label _info = Ui.Label("", true);
         private readonly Label _scanInfo = Ui.Label("", true);
+        private TextBox _subnetInput;
         private Button _scanButton;
         private volatile bool _scanning;
 
@@ -45,9 +46,15 @@ namespace DuoAssistant.Views.Pages
             _scanInfo.Dock = DockStyle.Top;
 
             _scanButton = Ui.Button(L10n.T("扫描局域网"), (s, e) => ScanLan(), 110, primary: true);
+            // 网段输入框：留空时只做被动发现；填写后追加 active 端口探测。
+            _subnetInput = Ui.Input(230);
+            var subnetHint = Ui.Label(L10n.T("指定网段（可选）："));
+            subnetHint.Padding = new Padding(0, 9, 2, 0);
             var bar = Ui.Toolbar(
                 Ui.Button(L10n.T("刷新列表"), (s, e) => RefreshData(), 100),
                 _scanButton,
+                subnetHint,
+                _subnetInput,
                 Ui.Button(L10n.T("设为默认"), (s, e) => SetDefault(), 100),
                 Ui.Button(L10n.T("打印测试页"), (s, e) => TestPage(), 110),
                 Ui.Button(L10n.T("打开文档"), (s, e) => System.Diagnostics.Process.Start(
@@ -118,11 +125,21 @@ namespace DuoAssistant.Views.Pages
             _scanButton.Text = L10n.T("扫描中…");
             _scanInfo.Text = L10n.T("扫描中…");
 
+            // 在 UI 线程读取输入，构造参数：填了网段才追加 active 方式（默认不探测）。
+            var subnets = (_subnetInput.Text ?? "").Trim();
+            var body = new JObject { ["timeoutMs"] = 1500 };
+            var methods = string.IsNullOrEmpty(subnets)
+                ? "installed,ssdp,mdns"
+                : "installed,ssdp,mdns,active";
+            body["methods"] = methods;
+            if (!string.IsNullOrEmpty(subnets)) body["subnets"] = subnets;
+            var args = body.ToString();
+
             Task.Run(() =>
             {
                 try
                 {
-                    return CommandDispatcher.Execute("ScanLanPrinters", "{\"timeoutMs\":1500}");
+                    return CommandDispatcher.Execute("ScanLanPrinters", args);
                 }
                 catch (Exception ex)
                 {
@@ -172,7 +189,10 @@ namespace DuoAssistant.Views.Pages
             }
             foreach (var d in discovered)
             {
-                var item = new ListViewItem(d["source"]?.ToString() ?? "");
+                var source = d["source"]?.ToString() ?? "";
+                if (string.Equals(source, "active", StringComparison.OrdinalIgnoreCase))
+                    source = L10n.T("端口探测");
+                var item = new ListViewItem(source);
                 item.SubItems.Add(d["name"]?.ToString() ?? "");
                 item.SubItems.Add(d["address"]?.ToString() ?? "");
                 item.SubItems.Add(d["port"]?.Value<int>() > 0 ? d["port"].ToString() : "");
@@ -184,6 +204,14 @@ namespace DuoAssistant.Views.Pages
 
             _scanInfo.Text = L10n.F("扫描完成：本机网络打印机 {0} 台 · 网络发现 {1} 台 · 耗时 {2} 毫秒",
                 installed.Count, discovered.Count, elapsed);
+            var probed = data?["probedHosts"]?.Value<int>() ?? 0;
+            if (probed > 0)
+            {
+                _scanInfo.Text += " · " + L10n.F("已探测 {0} 个地址", probed);
+                var skipped = data?["skippedHosts"]?.Value<int>() ?? 0;
+                if (skipped > 0)
+                    _scanInfo.Text += " · " + L10n.F("超出上限跳过 {0} 个", skipped);
+            }
             if (installed.Count == 0 && discovered.Count == 0)
                 _scanInfo.Text += " · " + L10n.T("尚未发现网络打印机。请确认目标设备已联网、已开机并开启了网络发现。");
         }
