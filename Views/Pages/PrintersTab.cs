@@ -247,14 +247,14 @@ namespace DuoAssistant.Views.Pages
         }
 
         /// <summary>
-        /// 把文件直发选中扫描出的网络打印机（host:port）。不依赖 Windows 驱动：
-        /// 走网络通道（631 走 IPP、9100 走 RAW），文件先渲染成 PDF 再发送。
+        /// 把文件智能直发选中扫描出的网络打印机（ip 可带端口）。本机不装驱动：
+        /// 走 PrintToIp，自动按缓存/探测选 631/IPP 或 9100/RAW，文件先渲染成 PDF 再发送。
         /// </summary>
         private void PrintToSelectedDevice()
         {
             var item = _scanList.SelectedItems.Count > 0 ? _scanList.SelectedItems[0] : null;
-            var target = item?.Tag as string;
-            if (string.IsNullOrEmpty(target))
+            var ip = item?.Tag as string; // 扫描行存的是 ip:port
+            if (string.IsNullOrEmpty(ip))
             {
                 MessageBox.Show(L10n.T("请先在扫描结果中选中一台带地址的网络打印机。"),
                     L10n.T("提示"), MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -269,21 +269,21 @@ namespace DuoAssistant.Views.Pages
 
                 var args = new JObject
                 {
-                    ["printer"] = target,
+                    ["ip"] = ip,
                     ["target"] = dlg.FileName,
                     ["copies"] = 1
                 }.ToString();
-                var json = CommandDispatcher.Execute("PrintFile", args);
+                var json = CommandDispatcher.Execute("PrintToIp", args);
                 var res = JObject.Parse(json);
                 if (res["code"]?.Value<int>() != 200)
                 {
-                    MessageBox.Show(res["error"]?.ToString(), L10n.T("发送失败"),
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    var hint = res["data"]?["detail"]?.ToString() ?? res["error"]?.ToString();
+                    MessageBox.Show(hint, L10n.T("发送失败"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 var engine = res["data"]?["engine"]?.ToString() ?? "";
                 var msg = res["data"]?["message"]?.ToString() ?? L10n.T("已发送");
-                MessageBox.Show($"{L10n.T("已发送到此设备")} {target}\n{engine}\n{msg}",
+                MessageBox.Show($"{L10n.T("已发送到此设备")} {ip}\n{engine}\n{msg}",
                     L10n.T("打印到此设备"), MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }

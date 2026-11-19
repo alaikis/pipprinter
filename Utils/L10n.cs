@@ -158,6 +158,8 @@ namespace DuoAssistant.Utils
             ["选择要打印到此设备的文件"] = "Select a file to print to this device",
             ["发送失败"] = "Send failed",
             ["已发送到此设备"] = "Sent to device",
+            ["网络打印机直发（本机无需驱动）：选文件后自动识别 631/IPP 或 9100/RAW"] =
+                "Direct network print (no driver needed on this PC): after picking a file, auto-detects 631/IPP or 9100/RAW",
 
             // ---- 磁盘清理页 ----
             ["大小"] = "Size",

@@ -162,7 +162,7 @@ namespace DuoAssistant.Services
                     "SetDefaultPrinter", "PrintTestPage", "GetPdfDriverConfig", "SetPdfPrintDriverConfig",
                     "MatchPrinter", "SetPrinterPreference", "GetPrinterPreferences",
                     "ScanDisk", "CleanDisk", "CleanAppTemp", "GetDiskInfo", "GetSettings", "SaveSettings", "GetStatus",
-                    "GetMachineFingerprint", "CheckUpdate", "ApplyUpdate", "ScanLanPrinters"
+                    "GetMachineFingerprint", "CheckUpdate", "ApplyUpdate", "ScanLanPrinters", "PrintToIp"
                 },
                 CleanWhitelist = new List<string>
                 {

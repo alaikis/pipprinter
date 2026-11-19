@@ -3,7 +3,9 @@
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -23,6 +25,76 @@ namespace DuoAssistant.Services
     public class NetPrinterService
     {
         private readonly HttpClient _http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+
+        /// <summary>
+        /// 智能直发：给定 host（可带端口），按缓存的识别结果选通道，未识别则自动探测
+        /// 631/IPP → 9100/RAW 降级，记住结果写缓存。RAW「连上就算」，IPP 有回执。
+        /// </summary>
+        public PrintOutcome PrintSmart(string host, byte[] pdfBytes, int copies = 1, int timeoutMs = 15000)
+        {
+            if (pdfBytes == null || pdfBytes.Length == 0)
+                return new PrintOutcome { Ok = false, Message = "没有可发送的 PDF 数据" };
+
+            // 归一化 host：解析出 host 与可选端口
+            var h = (host ?? "").Trim();
+            if (h.StartsWith("tcp://", StringComparison.OrdinalIgnoreCase)) h = h.Substring(6);
+            int explicitPort = 0;
+            var hostOnly = h;
+            var ci = h.LastIndexOf(':');
+            if (ci > 0 && int.TryParse(h.Substring(ci + 1), out explicitPort))
+                hostOnly = h.Substring(0, ci);
+
+            // 缓存按 host 存
+            var cached = Cache.Get(hostOnly);
+            if (cached != null && cached.Mode != "driver")
+            {
+                var port = cached.Port > 0 ? cached.Port : 631;
+                return cached.Mode == "raw" ? PrintRaw(hostOnly, port, pdfBytes, copies, timeoutMs)
+                                             : PrintIpp(hostOnly, port, pdfBytes, copies, timeoutMs);
+            }
+
+            // 缓存为 driver：明示需驱动
+            if (cached != null && cached.Mode == "driver")
+                return new PrintOutcome
+                {
+                    Ok = false, Engine = "Net",
+                    Message = "该设备此前识别为需驱动（IPP/RAW 均不可达）。请在 Windows 中安装厂商驱动后按名称打印。",
+                    Detail = "可删除缓存重新识别：清除 数据目录/netprint-cache.json 中该 IP 条目"
+                };
+
+            // 未缓存：若显式给了端口就按该端口发；否则按 631 → 9100 自动降级探测
+            if (explicitPort > 0)
+            {
+                var portOutcome = explicitPort == 631 || explicitPort == 636
+                    ? PrintIpp(hostOnly, explicitPort, pdfBytes, copies, timeoutMs)
+                    : PrintRaw(hostOnly, explicitPort, pdfBytes, copies, timeoutMs);
+                if (portOutcome.Ok)
+                    Cache.Put(hostOnly, explicitPort == 631 || explicitPort == 636 ? "ipp" : "raw", explicitPort);
+                return portOutcome;
+            }
+
+            var ipp = PrintIpp(hostOnly, 631, pdfBytes, copies, timeoutMs);
+            if (ipp.Ok)
+            {
+                Cache.Put(hostOnly, "ipp", 631);
+                return ipp;
+            }
+            var raw = PrintRaw(hostOnly, 9100, pdfBytes, copies, timeoutMs);
+            if (raw.Ok)
+            {
+                Cache.Put(hostOnly, "raw", 9100);
+                raw.Detail = "已自动识别为 9100 RAW 通道（连接成功即视为可达；9100 无回执，请留意是否出纸）";
+                return raw;
+            }
+
+            Cache.Put(hostOnly, "driver", 0);
+            return new PrintOutcome
+            {
+                Ok = false, Engine = "Net",
+                Message = $"无法直发 {hostOnly}：IPP(631) 与 RAW(9100) 均不可达",
+                Detail = "该设备可能未开放网络打印口，或只接受厂商私有协议。请在 Windows 中安装官方驱动后按名称打印；或确认设备已开启 IPP/RAW。"
+            };
+        }
 
         /// <summary>目标是否为 host:port 形式的网络打印机。</summary>
         public static bool IsNetworkTarget(string printer)
@@ -145,6 +217,72 @@ namespace DuoAssistant.Services
                 Message = $"IPP 发送失败 {host}:{port}：{lastErr}",
                 Detail = "该设备可能未开启 IPP，或端口非 631。可改用 9100 RAW 直发，或在 Windows 中安装厂商驱动后按名称打印。"
             };
+        }
+        /// <summary>
+        /// 网络打印机识别结果缓存：按 host 记住走 ipp / raw / driver，避免每次重复探测。
+        /// 持久化到 数据目录/netprint-cache.json。RAW「连上就算」是探测结论，非打印回执。
+        /// </summary>
+        public static class Cache
+        {
+            private static readonly object Gate = new object();
+            private static Dictionary<string, Entry> _map;
+            private static string Path => System.IO.Path.Combine(SettingsStore.Instance.DataDir, "netprint-cache.json");
+
+            public class Entry
+            {
+                public string Mode { get; set; } = "";
+                public int Port { get; set; }
+                public long Ts { get; set; }
+            }
+
+            private static Dictionary<string, Entry> Map()
+            {
+                if (_map != null) return _map;
+                try
+                {
+                    var json = File.Exists(Path) ? File.ReadAllText(Path) : "{}";
+                    _map = Newtonsoft.Json.Linq.JObject.Parse(json)
+                        .Properties().ToDictionary(p => p.Name,
+                            p => new Entry
+                            {
+                                Mode = p.Value["mode"]?.ToString() ?? "",
+                                Port = (int?)p.Value["port"] ?? 0,
+                                Ts = (long?)p.Value["ts"] ?? 0
+                            },
+                            System.StringComparer.OrdinalIgnoreCase);
+                }
+                catch { _map = new Dictionary<string, Entry>(System.StringComparer.OrdinalIgnoreCase); }
+                return _map;
+            }
+
+            public static Entry Get(string host)
+            {
+                lock (Gate)
+                {
+                    var m = Map();
+                    m.TryGetValue(host, out var e);
+                    return e;
+                }
+            }
+
+            public static void Put(string host, string mode, int port)
+            {
+                lock (Gate)
+                {
+                    var m = Map();
+                    m[host] = new Entry { Mode = mode, Port = port, Ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
+                    try
+                    {
+                        var json = new Newtonsoft.Json.Linq.JObject();
+                        foreach (var kv in m)
+                            json[kv.Key] = new Newtonsoft.Json.Linq.JObject
+                            { ["mode"] = kv.Value.Mode, ["port"] = kv.Value.Port, ["ts"] = kv.Value.Ts };
+                        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));
+                        File.WriteAllText(Path, json.ToString());
+                    }
+                    catch (Exception ex) { Tools.Logger("网络打印缓存写入失败: " + ex.Message); }
+                }
+            }
         }
     }
 }
