@@ -57,6 +57,7 @@ namespace DuoAssistant.Views.Pages
                 _subnetInput,
                 Ui.Button(L10n.T("设为默认"), (s, e) => SetDefault(), 100),
                 Ui.Button(L10n.T("打印测试页"), (s, e) => TestPage(), 110),
+                Ui.Button(L10n.T("打印到此设备"), (s, e) => PrintToSelectedDevice(), 110),
                 Ui.Button(L10n.T("打开文档"), (s, e) => System.Diagnostics.Process.Start(
                     new System.Diagnostics.ProcessStartInfo(Program.DocsUrl) { UseShellExecute = true }), 100),
                 _info);
@@ -198,6 +199,9 @@ namespace DuoAssistant.Views.Pages
                 item.SubItems.Add(d["port"]?.Value<int>() > 0 ? d["port"].ToString() : "");
                 item.SubItems.Add(d["protocol"]?.ToString() ?? "");
                 item.SubItems.Add(d["model"]?.ToString() ?? "");
+                var addr = d["address"]?.ToString() ?? "";
+                var port = d["port"]?.Value<int>() ?? 0;
+                item.Tag = (!string.IsNullOrEmpty(addr) && port > 0) ? $"{addr}:{port}" : null;
                 _scanList.Items.Add(item);
             }
             _scanList.EndUpdate();
@@ -240,6 +244,48 @@ namespace DuoAssistant.Views.Pages
             MessageBox.Show(res["error"]?.ToString() ?? L10n.T("已发送测试页"), L10n.T("测试页"),
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             RefreshData();
+        }
+
+        /// <summary>
+        /// 把文件直发选中扫描出的网络打印机（host:port）。不依赖 Windows 驱动：
+        /// 走网络通道（631 走 IPP、9100 走 RAW），文件先渲染成 PDF 再发送。
+        /// </summary>
+        private void PrintToSelectedDevice()
+        {
+            var item = _scanList.SelectedItems.Count > 0 ? _scanList.SelectedItems[0] : null;
+            var target = item?.Tag as string;
+            if (string.IsNullOrEmpty(target))
+            {
+                MessageBox.Show(L10n.T("请先在扫描结果中选中一台带地址的网络打印机。"),
+                    L10n.T("提示"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var dlg = new OpenFileDialog())
+            {
+                dlg.Title = L10n.T("选择要打印到此设备的文件");
+                dlg.Filter = "可打印文件|*.pdf;*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.txt;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx;*.rtf;*.svg|所有文件|*.*";
+                if (dlg.ShowDialog() != DialogResult.OK) return;
+
+                var args = new JObject
+                {
+                    ["printer"] = target,
+                    ["target"] = dlg.FileName,
+                    ["copies"] = 1
+                }.ToString();
+                var json = CommandDispatcher.Execute("PrintFile", args);
+                var res = JObject.Parse(json);
+                if (res["code"]?.Value<int>() != 200)
+                {
+                    MessageBox.Show(res["error"]?.ToString(), L10n.T("发送失败"),
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                var engine = res["data"]?["engine"]?.ToString() ?? "";
+                var msg = res["data"]?["message"]?.ToString() ?? L10n.T("已发送");
+                MessageBox.Show($"{L10n.T("已发送到此设备")} {target}\n{engine}\n{msg}",
+                    L10n.T("打印到此设备"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
     }
 }

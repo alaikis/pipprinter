@@ -95,6 +95,20 @@ namespace DuoAssistant.Services
                 Tools.Logger(string.Format("打印任务 {0} → {1} (类型 {2}, 打印机 {3})",
                     job.Id, local, ext, printer));
 
+                // 网络打印机（host:port）：不依赖 Windows 驱动，渲染成 PDF 字节后按端口直发
+                if (NetPrinterService.IsNetworkTarget(printer))
+                {
+                    var rendered = new NetPrinterService().ToPdfBytes(job, this, out _);
+                    if (rendered == null)
+                        return new PrintOutcome
+                        {
+                            Ok = false, Engine = "Net",
+                            Message = "该文件类型无法渲染为 PDF，不能走网络直发：" + ext,
+                            Detail = "请将文件先转成 PDF，或改用已安装驱动的本机打印机名"
+                        };
+                    return new NetPrinterService().Print(printer, rendered, job.Copies);
+                }
+
                 if (Array.IndexOf(PrintFileTypes.Pdf, ext) >= 0)
                     return PrintWithSumatra(local, job, printer);
 
