@@ -584,8 +584,10 @@ namespace DuoAssistant.Services
             Result.success(data: _printers.GetInstalled(), cmd: "GetPrinterDetail");
 
         /// <summary>
-        /// 只读：扫描局域网打印机，叠加 WMI 已安装网络打印机 + SSDP/WSD + mDNS(IPP/IPPS/raw)。
-        /// 只发标准发现报文、不装驱动、不改系统。参数 timeoutMs(500-8000)、methods(installed,ssdp,mdns)。
+        /// 只读：扫描局域网打印机，叠加 WMI 已安装网络打印机 + SSDP/WSD + mDNS(IPP/IPPS/raw)
+        /// + active（按指定网段 TCP 端口探测，须显式声明 methods 含 active 且给出 subnets）。
+        /// 只发标准发现/握手报文、不发送打印数据、不装驱动、不改系统。
+        /// 参数 timeoutMs(500-8000)、methods(installed,ssdp,mdns,active)、subnets、maxHosts(1-4096)。
         /// 结果仅用于识别设备；实际使用仍需 Windows 添加网络打印机并安装厂商驱动。
         /// </summary>
         public string ScanLanPrinters(string args)
@@ -594,6 +596,8 @@ namespace DuoAssistant.Services
             {
                 var dt = ParseObject(args);
                 var timeout = dt["timeoutMs"]?.Value<int>() ?? 1500;
+                var maxHosts = dt["maxHosts"]?.Value<int>() ?? 512;
+                var subnets = dt["subnets"]?.ToString() ?? "";
                 var methods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var methodsToken = dt["methods"];
                 if (methodsToken is JArray arr && arr.Count > 0)
@@ -602,7 +606,7 @@ namespace DuoAssistant.Services
                     foreach (var m in methodsToken.ToString().Split(','))
                         if (!string.IsNullOrWhiteSpace(m)) methods.Add(m.Trim());
 
-                var result = new LanPrinterScanner().Scan(timeout, methods);
+                var result = new LanPrinterScanner().Scan(timeout, methods, subnets, maxHosts);
                 return Result.success(data: result, cmd: "ScanLanPrinters");
             }
             catch (Exception ex)

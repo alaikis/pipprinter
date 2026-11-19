@@ -139,14 +139,23 @@ namespace DuoAssistant.Services
                 data = CommandDispatcher.ListCommands()
             }));
             app.MapGet("/api/printers", () => Json(CommandDispatcher.Execute("GetPrinterList", "{}")));
-            // 只读：局域网打印机扫描（WMI 已安装网络打印机 + SSDP/WSD + mDNS）。
-            // 支持 ?timeoutMs=1500&methods=installed,ssdp,mdns 限制耗时与发现方式；不装驱动、不改系统。
+            // 只读：局域网打印机扫描（WMI 已安装网络打印机 + SSDP/WSD + mDNS + 可选 active 网段探测）。
+            // ?timeoutMs=1500&methods=installed,ssdp,mdns,active&subnets=192.168.1.0/24&maxHosts=512
+            // active 须显式声明且给出 subnets 才执行；只握手探测端口、不发送打印数据、不装驱动、不改系统。
             app.MapGet("/api/printers/scan", async (HttpContext ctx) =>
             {
                 var q = ctx.Request.Query;
                 var timeout = int.TryParse(q["timeoutMs"], out var t) ? t : 1500;
+                var maxHosts = int.TryParse(q["maxHosts"], out var mh) ? mh : 512;
                 var methods = q["methods"].ToString();
-                var body = new JObject { ["timeoutMs"] = timeout, ["methods"] = methods };
+                var subnets = q["subnets"].ToString();
+                var body = new JObject
+                {
+                    ["timeoutMs"] = timeout,
+                    ["methods"] = methods,
+                    ["subnets"] = subnets,
+                    ["maxHosts"] = maxHosts
+                };
                 return Json(CommandDispatcher.Execute("ScanLanPrinters", body.ToString()));
             });
             app.MapGet("/api/queue", () => Json(CommandDispatcher.Execute("GetQueue", "{}")));

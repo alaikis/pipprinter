@@ -149,6 +149,10 @@ namespace DuoAssistant.Utils
                 "Results are for identification only; to use a device, add it as a network printer in Windows and install the vendor driver.",
             ["尚未发现网络打印机。请确认目标设备已联网、已开机并开启了网络发现。"] =
                 "No network printers found. Make sure the device is powered on, online, and network discovery is enabled.",
+            ["指定网段（可选）："] = "Target subnets (optional):",
+            ["端口探测"] = "Port probe",
+            ["已探测 {0} 个地址"] = "Probed {0} addresses",
+            ["超出上限跳过 {0} 个"] = "{0} skipped (limit reached)",
 
             // ---- 磁盘清理页 ----
             ["大小"] = "Size",

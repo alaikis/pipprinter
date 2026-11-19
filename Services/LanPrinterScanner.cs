@@ -3,6 +3,7 @@
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -11,6 +12,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using DuoAssistant.Utils;
 
 namespace DuoAssistant.Services
@@ -44,6 +47,10 @@ namespace DuoAssistant.Services
         public List<string> methods { get; set; } = new List<string>();
         public int elapsedMs { get; set; }
         public string note { get; set; } = "";
+        // 主动探测时记录用户给定网段解析出的目标地址数，便于 UI 说明扫描规模。
+        public int probedHosts { get; set; }
+        // 主动探测跳过了多少超限地址（网段过大时按上限截断）。
+        public int skippedHosts { get; set; }
     }
 
     /// <summary>
@@ -64,12 +71,17 @@ namespace DuoAssistant.Services
         }
 
         /// <summary>
-        /// 执行一次扫描。methods 取 installed / ssdp / mdns 的任意子集；timeoutMs 为每路网络发现超时。
+        /// 执行一次扫描。methods 取 installed / ssdp / mdns / active 的任意子集；timeoutMs 为每路网络发现超时。
+        /// active 为按指定网段的 TCP 端口只读探测：必须显式声明且给出 subnets 才会执行，默认不启用。
+        /// subnets 支持逗号/分号分隔的 IPv4 单地址、CIDR（192.168.1.0/24）、范围（192.168.1.1-192.168.1.50）。
+        /// maxHosts 限制单次目标地址数（1-4096），防止超大网段造成资源占用。
         /// </summary>
-        public LanScanResult Scan(int timeoutMs, HashSet<string> methods)
+        public LanScanResult Scan(int timeoutMs, HashSet<string> methods, string subnets = null, int maxHosts = 512)
         {
             if (timeoutMs < 500) timeoutMs = 500;
             if (timeoutMs > 8000) timeoutMs = 8000;
+            if (maxHosts < 1) maxHosts = 1;
+            if (maxHosts > 4096) maxHosts = 4096;
 
             var sw = Stopwatch.StartNew();
             var result = new LanScanResult
@@ -78,6 +90,7 @@ namespace DuoAssistant.Services
             };
             var chosen = new HashSet<string>(methods ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
+            // 默认三种被动/只读发现；active 必须显式声明，绝不默认探测网段。
             if (chosen.Count == 0) chosen = new HashSet<string>(new[] { "installed", "ssdp", "mdns" }, StringComparer.OrdinalIgnoreCase);
 
             if (chosen.Contains("installed"))
@@ -95,6 +108,23 @@ namespace DuoAssistant.Services
                 try { result.discovered.AddRange(MdnsDiscover(Math.Min(timeoutMs, 1800))); }
                 catch (Exception ex) { Tools.Logger("局域网扫描：mDNS 发现失败 " + ex.Message); }
             }
+            if (chosen.Contains("active"))
+            {
+                try
+                {
+                    var budget = Math.Min(Math.Max(timeoutMs * 2, 1500), 8000);
+                    var active = ProbeActive(subnets, maxHosts, budget,
+                        out var probed, out var skipped);
+                    result.probedHosts = probed;
+                    result.skippedHosts = skipped;
+                    result.discovered.AddRange(active);
+                    if (probed == 0)
+                        result.note += " 未解析到有效的目标网段，主动探测已跳过。";
+                    else
+                        result.note += " 主动探测仅检测常见打印端口是否开放，不发送任何打印数据，端口开放不代表可立即使用。";
+                }
+                catch (Exception ex) { Tools.Logger("局域网扫描：主动探测失败 " + ex.Message); }
+            }
 
             result.discovered = Dedupe(result.discovered);
             result.methods = chosen.OrderBy(x => x).ToList();
@@ -102,6 +132,164 @@ namespace DuoAssistant.Services
             result.elapsedMs = (int)sw.ElapsedMilliseconds;
             return result;
         }
+
+        // 主动探测：对指定 IPv4 网段的常见打印端口做 TCP 连接测试，只握手、不发送任何字节。
+        // 每地址只记录第一个开放的端口，减少连接数；整体受 budget 取消，并发受限。
+        private static readonly int[] ProbePorts = { 9100, 631, 515 };
+        private static readonly string[] ProbeProtocols = { "raw", "ipp", "lpd" };
+
+        private static List<LanPrinterDevice> ProbeActive(string subnets, int maxHosts, int budgetMs,
+            out int probed, out int skipped)
+        {
+            probed = 0;
+            skipped = 0;
+            var found = new ConcurrentBag<LanPrinterDevice>();
+            var targets = ParseTargets(subnets, maxHosts, out skipped);
+            probed = targets.Count;
+            if (targets.Count == 0) return found.ToList();
+
+            using (var cts = new CancellationTokenSource(budgetMs))
+            {
+                var options = new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = 64,
+                    CancellationToken = cts.Token
+                };
+                try
+                {
+                    Parallel.ForEach(targets, options, ip =>
+                    {
+                        if (cts.IsCancellationRequested) return;
+                        var address = ip.ToString();
+                        for (var i = 0; i < ProbePorts.Length; i++)
+                        {
+                            if (cts.IsCancellationRequested) return;
+                            if (!IsPortOpen(ip, ProbePorts[i], 180)) continue;
+                            found.Add(new LanPrinterDevice
+                            {
+                                source = "active",
+                                name = address,
+                                address = address,
+                                port = ProbePorts[i],
+                                protocol = ProbeProtocols[i],
+                                model = ""
+                            });
+                            break; // 每地址只记一个端口，降低对设备的连接压力。
+                        }
+                    });
+                }
+                catch (OperationCanceledException) { /* 到达时间预算，返回已发现结果 */ }
+            }
+            return found.OrderBy(x => x.address).ToList();
+        }
+
+        /// <summary>TCP 只握手探测端口，不发送任何数据。超时按毫秒计。</summary>
+        private static bool IsPortOpen(IPAddress ip, int port, int timeoutMs)
+        {
+            try
+            {
+                using (var client = new TcpClient())
+                {
+                    var task = client.ConnectAsync(ip, port);
+                    if (!task.Wait(timeoutMs)) return false;
+                    return client.Connected;
+                }
+            }
+            catch { return false; }
+        }
+
+        /// <summary>解析目标网段为 IPv4 地址列表：单 IP / CIDR / 起止范围，去重并按上限截断。</summary>
+        private static List<IPAddress> ParseTargets(string subnets, int maxHosts, out int skipped)
+        {
+            skipped = 0;
+            var targets = new List<IPAddress>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(subnets)) return targets;
+
+            var tokens = subnets.Split(new[] { ',', ';', ' ', '\t', '\n', '\r' },
+                StringSplitOptions.RemoveEmptyEntries);
+            foreach (var token in tokens)
+            {
+                if (targets.Count >= maxHosts) break;
+                try
+                {
+                    IEnumerable<uint> addresses;
+                    long segmentSize;
+                    if (token.IndexOf('/') > 0)
+                    {
+                        var parts = token.Split('/');
+                        var baseIp = IPAddress.Parse(parts[0]);
+                        if (baseIp.AddressFamily != AddressFamily.InterNetwork) continue;
+                        var prefix = int.Parse(parts[1]);
+                        if (prefix < 0 || prefix > 32) continue;
+                        segmentSize = prefix == 32 ? 1L : (1L << (32 - prefix));
+                        addresses = EnumerateCidr(IpToUInt(baseIp), prefix);
+                    }
+                    else if (token.IndexOf('-') > 0)
+                    {
+                        var parts = token.Split('-');
+                        var from = IPAddress.Parse(parts[0]);
+                        var to = IPAddress.Parse(parts[1]);
+                        if (from.AddressFamily != AddressFamily.InterNetwork ||
+                            to.AddressFamily != AddressFamily.InterNetwork) continue;
+                        var start = IpToUInt(from);
+                        var end = IpToUInt(to);
+                        if (start > end) { var tmp = start; start = end; end = tmp; }
+                        segmentSize = (long)end - start + 1;
+                        addresses = EnumerateRange(start, end);
+                    }
+                    else
+                    {
+                        var single = IPAddress.Parse(token);
+                        if (single.AddressFamily != AddressFamily.InterNetwork) continue;
+                        segmentSize = 1;
+                        addresses = new[] { IpToUInt(single) };
+                    }
+
+                    // 只枚举到上限；未枚举到的部分计入 skipped。超大网段不会惰性迭代到底。
+                    var enumerated = 0;
+                    foreach (var value in addresses)
+                    {
+                        if (targets.Count >= maxHosts) break;
+                        enumerated++;
+                        var ip = UIntToIp(value);
+                        if (seen.Add(ip.ToString())) targets.Add(ip);
+                    }
+                    if (enumerated < segmentSize)
+                        skipped += (int)Math.Min(int.MaxValue, segmentSize - enumerated);
+                }
+                catch { /* 单段格式非法，忽略该段 */ }
+            }
+            return targets;
+        }
+
+        private static IEnumerable<uint> EnumerateCidr(uint baseIp, int prefix)
+        {
+            if (prefix == 32) { yield return baseIp; yield break; }
+            var mask = prefix == 0 ? 0u : (0xFFFFFFFFu << (32 - prefix));
+            var network = baseIp & mask;
+            var broadcast = network | ~mask;
+            var start = network + 1; // 跳过网络地址
+            var end = broadcast - 1; // 跳过广播地址
+            if (prefix >= 31) { start = network; end = broadcast; } // /31、/32 两端都可分配
+            for (var v = start; v <= end; v++) yield return v;
+        }
+
+        private static IEnumerable<uint> EnumerateRange(uint start, uint end)
+        {
+            for (var v = start; v <= end; v++) yield return v;
+        }
+
+        private static uint IpToUInt(IPAddress ip)
+        {
+            var b = ip.GetAddressBytes();
+            return ((uint)b[0] << 24) | ((uint)b[1] << 16) | ((uint)b[2] << 8) | b[3];
+        }
+
+        private static IPAddress UIntToIp(uint value) => new IPAddress(new[]
+        {
+            (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value
+        });
 
         /// <summary>WMI：本机已安装且为网络打印机（Network=true 或端口具备网络特征）。</summary>
         private static List<LanInstalledPrinter> ScanInstalledNetwork()
