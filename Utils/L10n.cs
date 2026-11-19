@@ -153,6 +153,11 @@ namespace DuoAssistant.Utils
             ["端口探测"] = "Port probe",
             ["已探测 {0} 个地址"] = "Probed {0} addresses",
             ["超出上限跳过 {0} 个"] = "{0} skipped (limit reached)",
+            ["打印到此设备"] = "Print to device",
+            ["请先在扫描结果中选中一台带地址的网络打印机。"] = "Please select a network printer with an address from the scan results first.",
+            ["选择要打印到此设备的文件"] = "Select a file to print to this device",
+            ["发送失败"] = "Send failed",
+            ["已发送到此设备"] = "Sent to device",
 
             // ---- 磁盘清理页 ----
             ["大小"] = "Size",
