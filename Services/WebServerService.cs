@@ -139,6 +139,16 @@ namespace DuoAssistant.Services
                 data = CommandDispatcher.ListCommands()
             }));
             app.MapGet("/api/printers", () => Json(CommandDispatcher.Execute("GetPrinterList", "{}")));
+            // 只读：局域网打印机扫描（WMI 已安装网络打印机 + SSDP/WSD + mDNS）。
+            // 支持 ?timeoutMs=1500&methods=installed,ssdp,mdns 限制耗时与发现方式；不装驱动、不改系统。
+            app.MapGet("/api/printers/scan", async (HttpContext ctx) =>
+            {
+                var q = ctx.Request.Query;
+                var timeout = int.TryParse(q["timeoutMs"], out var t) ? t : 1500;
+                var methods = q["methods"].ToString();
+                var body = new JObject { ["timeoutMs"] = timeout, ["methods"] = methods };
+                return Json(CommandDispatcher.Execute("ScanLanPrinters", body.ToString()));
+            });
             app.MapGet("/api/queue", () => Json(CommandDispatcher.Execute("GetQueue", "{}")));
             app.MapGet("/api/disk", () => Json(CommandDispatcher.Execute("GetDiskInfo", "{}")));
             app.MapGet("/api/machine", () => Json(CommandDispatcher.Execute("GetMachineFingerprint", "{}")));

@@ -133,6 +133,23 @@ namespace DuoAssistant.Utils
             ["已发送测试页"] = "Test page sent",
             ["测试页"] = "Test page",
 
+            // ---- 局域网打印机扫描 ----
+            ["扫描局域网"] = "Scan LAN",
+            ["扫描中…"] = "Scanning…",
+            ["局域网扫描"] = "LAN scan",
+            ["来源"] = "Source",
+            ["名称"] = "Name",
+            ["地址"] = "Address",
+            ["型号"] = "Model",
+            ["本机网络打印机"] = "Installed network printers",
+            ["网络发现的设备"] = "Discovered devices",
+            ["扫描完成：本机网络打印机 {0} 台 · 网络发现 {1} 台 · 耗时 {2} 毫秒"] =
+                "Scan done: {0} installed network printers · {1} discovered · {2} ms",
+            ["扫描结果仅用于识别设备；如需使用请在 Windows 中添加为网络打印机并安装厂商驱动。"] =
+                "Results are for identification only; to use a device, add it as a network printer in Windows and install the vendor driver.",
+            ["尚未发现网络打印机。请确认目标设备已联网、已开机并开启了网络发现。"] =
+                "No network printers found. Make sure the device is powered on, online, and network discovery is enabled.",
+
             // ---- 磁盘清理页 ----
             ["大小"] = "Size",
             ["最后修改"] = "Last modified",

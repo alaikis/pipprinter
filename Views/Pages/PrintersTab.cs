@@ -4,6 +4,7 @@
 // You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
 using System;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using DuoAssistant.Services;
 using DuoAssistant.Utils;
@@ -11,13 +12,19 @@ using Newtonsoft.Json.Linq;
 
 namespace DuoAssistant.Views.Pages
 {
-    /// <summary>「打印机」页：本机打印机列表、驱动信息、默认切换、测试页。</summary>
+    /// <summary>「打印机」页：局域网扫描、本机打印机列表、驱动信息、默认切换、测试页。</summary>
     public class PrintersTab : UserControl, IRefreshable
     {
         private readonly ListView _list = Ui.List(
             L10n.T("打印机名称"), L10n.T("驱动"), L10n.T("端口"), L10n.T("默认"),
             L10n.T("状态"), L10n.T("纸张规格"));
+        private readonly ListView _scanList = Ui.List(
+            L10n.T("来源"), L10n.T("名称"), L10n.T("地址"), L10n.T("端口"),
+            L10n.T("协议"), L10n.T("型号"));
         private readonly Label _info = Ui.Label("", true);
+        private readonly Label _scanInfo = Ui.Label("", true);
+        private Button _scanButton;
+        private volatile bool _scanning;
 
         public PrintersTab()
         {
@@ -29,19 +36,50 @@ namespace DuoAssistant.Views.Pages
             _list.Columns[3].Width = 70;
             _list.Columns[4].Width = 90;
             _list.Columns[5].Width = 260;
+            _scanList.Columns[0].Width = 110;
+            _scanList.Columns[1].Width = 260;
+            _scanList.Columns[2].Width = 150;
+            _scanList.Columns[3].Width = 90;
+            _scanList.Columns[4].Width = 90;
+            _scanList.Columns[5].Width = 220;
+            _scanInfo.Dock = DockStyle.Top;
 
+            _scanButton = Ui.Button(L10n.T("扫描局域网"), (s, e) => ScanLan(), 110, primary: true);
             var bar = Ui.Toolbar(
                 Ui.Button(L10n.T("刷新列表"), (s, e) => RefreshData(), 100),
-                Ui.Button(L10n.T("设为默认"), (s, e) => SetDefault(), 100, primary: true),
+                _scanButton,
+                Ui.Button(L10n.T("设为默认"), (s, e) => SetDefault(), 100),
                 Ui.Button(L10n.T("打印测试页"), (s, e) => TestPage(), 110),
                 Ui.Button(L10n.T("打开文档"), (s, e) => System.Diagnostics.Process.Start(
                     new System.Diagnostics.ProcessStartInfo(Program.DocsUrl) { UseShellExecute = true }), 100),
                 _info);
 
+            // 扫描结果在上、本机列表在下；两者共用同一工具栏。
+            var scanPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 0, 4) };
+            scanPanel.Controls.Add(_scanList);
+            scanPanel.Controls.Add(_scanInfo);
+
+            var localPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0) };
+            localPanel.Controls.Add(_list);
+
+            var split = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Horizontal,
+                SplitterDistance = 190,
+                BackColor = Theme.Border
+            };
+            split.Panel1.BackColor = Theme.Card;
+            split.Panel2.BackColor = Theme.Card;
+            split.Panel1.Controls.Add(scanPanel);
+            split.Panel2.Controls.Add(localPanel);
+
             var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12) };
-            root.Controls.Add(_list);
+            root.Controls.Add(split);
             root.Controls.Add(bar);
             Controls.Add(root);
+
+            _scanInfo.Text = L10n.T("扫描结果仅用于识别设备；如需使用请在 Windows 中添加为网络打印机并安装厂商驱动。");
             RefreshData();
         }
 
@@ -69,6 +107,85 @@ namespace DuoAssistant.Views.Pages
             _list.EndUpdate();
             _info.Text = L10n.F("本机共 {0} 台打印机 · 当前默认：", _list.Items.Count) +
                          (data?["primary"]?.ToString() ?? L10n.T("(无)"));
+        }
+
+        /// <summary>异步扫描局域网，避免网络发现阻塞 UI 线程。结果仅用于识别，不安装驱动。</summary>
+        private void ScanLan()
+        {
+            if (_scanning) return;
+            _scanning = true;
+            _scanButton.Enabled = false;
+            _scanButton.Text = L10n.T("扫描中…");
+            _scanInfo.Text = L10n.T("扫描中…");
+
+            Task.Run(() =>
+            {
+                try
+                {
+                    return CommandDispatcher.Execute("ScanLanPrinters", "{\"timeoutMs\":1500}");
+                }
+                catch (Exception ex)
+                {
+                    return JObject.Parse(Result.error(ex.Message, cmd: "ScanLanPrinters")).ToString();
+                }
+            }).ContinueWith(t =>
+            {
+                Ui.Safe(this, () =>
+                {
+                    try { FillScan(t.Result); }
+                    catch (Exception ex) { _scanInfo.Text = L10n.T("失败") + "：" + ex.Message; }
+                    finally
+                    {
+                        _scanning = false;
+                        _scanButton.Enabled = true;
+                        _scanButton.Text = L10n.T("扫描局域网");
+                    }
+                });
+            }, TaskScheduler.Default);
+        }
+
+        private void FillScan(string json)
+        {
+            var root = JObject.Parse(json);
+            if (root["code"]?.Value<int>() != 200)
+            {
+                _scanInfo.Text = L10n.T("失败") + "：" + (root["error"]?.ToString() ?? "");
+                return;
+            }
+            var data = root["data"] as JObject;
+            var installed = data?["installedNetwork"] as JArray ?? new JArray();
+            var discovered = data?["discovered"] as JArray ?? new JArray();
+            var elapsed = data?["elapsedMs"]?.Value<int>() ?? 0;
+
+            _scanList.BeginUpdate();
+            _scanList.Items.Clear();
+            foreach (var p in installed)
+            {
+                var item = new ListViewItem(L10n.T("本机网络打印机"));
+                item.SubItems.Add(p["name"]?.ToString() ?? "");
+                item.SubItems.Add(p["port"]?.ToString() ?? "");
+                item.SubItems.Add("");
+                item.SubItems.Add("GDI");
+                item.SubItems.Add(p["driver"]?.ToString() ?? "");
+                item.ForeColor = Theme.Success;
+                _scanList.Items.Add(item);
+            }
+            foreach (var d in discovered)
+            {
+                var item = new ListViewItem(d["source"]?.ToString() ?? "");
+                item.SubItems.Add(d["name"]?.ToString() ?? "");
+                item.SubItems.Add(d["address"]?.ToString() ?? "");
+                item.SubItems.Add(d["port"]?.Value<int>() > 0 ? d["port"].ToString() : "");
+                item.SubItems.Add(d["protocol"]?.ToString() ?? "");
+                item.SubItems.Add(d["model"]?.ToString() ?? "");
+                _scanList.Items.Add(item);
+            }
+            _scanList.EndUpdate();
+
+            _scanInfo.Text = L10n.F("扫描完成：本机网络打印机 {0} 台 · 网络发现 {1} 台 · 耗时 {2} 毫秒",
+                installed.Count, discovered.Count, elapsed);
+            if (installed.Count == 0 && discovered.Count == 0)
+                _scanInfo.Text += " · " + L10n.T("尚未发现网络打印机。请确认目标设备已联网、已开机并开启了网络发现。");
         }
 
         private string SelectedName()
