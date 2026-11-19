@@ -86,6 +86,13 @@ namespace DuoAssistant
             }
             catch (Exception ex) { Utils.Tools.Logger("AO 客户端启动失败: " + ex); }
 
+            // 排期调度器：把到点的计划任务放入打印队列（复用队列的幂等去重/批次/断网补打）
+            try
+            {
+                DuoAssistant.Services.ScheduledPrintScheduler.Instance.Start();
+            }
+            catch (Exception ex) { Utils.Tools.Logger("排期调度器启动失败: " + ex.Message); }
+
             // 使用无参 Run()：Application.Run(Form) 会自动 Show 主窗体，
             // 覆盖托盘驻留逻辑。静态引用保持窗体与 NotifyIcon 存活。
             // --show 便于首次运行/验收时直接打开主窗口。
@@ -109,6 +116,7 @@ namespace DuoAssistant
             finally
             {
                 AutoUpdateService.Instance.Stop();
+                DuoAssistant.Services.ScheduledPrintScheduler.Instance.Stop();
                 _web?.StopAsync().GetAwaiter().GetResult();
                 _ws?.Stop();
                 _ao.Stop();

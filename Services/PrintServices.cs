@@ -553,9 +553,29 @@ namespace DuoAssistant.Services
                 var target = ResolveTarget(dt);
                 if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("缺少 target 字段");
                 var job = BuildJob(dt, target);
+                // 透传批次/计划/幂等参数（可选）
+                job.GroupId = Str(dt, "groupId") ?? Str(dt, "group") ?? "";
+                var order = Int(dt, "groupOrder", -1);
+                job.GroupOrder = order >= 0 ? order : 0;
+                if (string.IsNullOrEmpty(job.GroupId)) job.GroupOrder = 0;
+                if (!string.IsNullOrWhiteSpace(Str(dt, "dueAt")))
+                {
+                    // 支持 ISO8601（UTC 优先）/ Unix 秒 / 本地 yyyy-MM-dd HH:mm:ss
+                    job.DueAt = ParseDueAt(Str(dt, "dueAt"));
+                }
+                job.IdempotencyKey = Str(dt, "idempotencyKey") ?? "";
                 var queued = PrintQueueService.Instance.Enqueue(job);
-                return Result.success(data: new { jobId = queued.Id, job = queued },
-                    cmd: "QueuePrint", msg: "已加入打印队列");
+                return Result.success(data: new
+                {
+                    jobId = queued.Id,
+                    deduped = queued.Deduped,
+                    dueAt = queued.DueAt,
+                    groupId = queued.GroupId,
+                    groupOrder = queued.GroupOrder,
+                    job = queued
+                }, cmd: "QueuePrint",
+                    msg: queued.Deduped ? "幂等命中，未重复入队"
+                        : (queued.DueAt != null ? "计划任务已暂存，到点自动入队打印" : "已加入打印队列"));
             }
             catch (Exception ex)
             {
@@ -588,6 +608,179 @@ namespace DuoAssistant.Services
             return ok
                 ? Result.success(data: new { id }, cmd: "CancelJob", msg: "任务已取消")
                 : Result.error("任务不存在或正在打印", 400, "CancelJob");
+        }
+
+        /// <summary>
+        /// 召回（可撤回）：撤下「已入队、尚未开始打印」的任务并记审计留痕，
+        /// 供物流中心核对「这单为什么没打 / 被谁撤回」。
+        /// 正在打印（printing）或已出纸的任务无法撤回——裸 RAW/IPP 网络直发一旦出纸即不可撤销，
+        /// 只能靠审计回执追溯，此方法对其返回 false 并附提示。
+        /// 参数：id（必填，jobId）、reason（可选，撤回原因）。
+        /// </summary>
+        public string RecallJob(string args)
+        {
+            const string cmd = "RecallJob";
+            try
+            {
+                var dt = ParseObject(args);
+                var id = Str(dt, "id") ?? Str(dt, "jobId");
+                if (string.IsNullOrWhiteSpace(id))
+                    return Result.error("缺少 id 字段（jobId）", 400, cmd);
+                var reason = Str(dt, "reason") ?? "";
+                var msg = PrintQueueService.Instance.Recall(id, reason);
+                if (msg.StartsWith("任务已召回"))
+                    return Result.success(data: new { id, reason }, cmd: cmd, msg);
+                // 任务不存在 → 404；printing 无法撤回 → 409（提示走审计追溯）
+                var code = msg.StartsWith("任务不存在") ? 404 : 409;
+                return Result.error(msg, code, cmd);
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        // ------------------------------------------------ 排期 / 计划任务
+
+        /// <summary>
+        /// 排一个计划打印任务：到点自动入队打印（复用队列的幂等去重/批次/断网补打）。
+        /// 参数：dueAt（ISO8601 或 Unix 秒，UTC 优先）、job（PrintJob 字段：target/printer/copies/…）、
+        ///       idempotencyKey（可选，触发重复也不重打）、note（可选备注）。
+        /// 返回 planId，后续可用 RecallPlan/NowPlan 管理。
+        /// </summary>
+        public string SchedulePrint(string args)
+        {
+            const string cmd = "SchedulePrint";
+            try
+            {
+                var dt = ParseObject(args);
+                var dueRaw = Str(dt, "dueAt") ?? Str(dt, "due") ?? Str(dt, "at");
+                if (string.IsNullOrWhiteSpace(dueRaw))
+                    return Result.error("缺少 dueAt 字段（ISO8601 或 Unix 秒，UTC 优先）", 400, cmd);
+                DateTime? due;
+                try { due = ParseDueAt(dueRaw); }
+                catch (Exception ex) { return Result.error("dueAt 格式无法解析: " + ex.Message, 400, cmd); }
+                if (due <= DateTime.UtcNow.AddSeconds(1))
+                    due = DateTime.UtcNow.AddSeconds(1); // 至少 1s 后
+
+                var job = new PrintJob();
+                if (dt["job"] is JObject jobObj)
+                {
+                    var j = BuildJob(jobObj, ResolveTarget(jobObj));
+                    job = j;
+                }
+                else
+                {
+                    // 也支持平铺：把外层 target/printer/copies 等直接当 job 字段
+                    var target = ResolveTarget(dt);
+                    if (string.IsNullOrWhiteSpace(target))
+                        return Result.error("缺少 job.target 或 target 字段（要打印的文件路径/URL）", 400, cmd);
+                    job = BuildJob(dt, target);
+                }
+                job.IdempotencyKey = Str(dt, "idempotencyKey") ?? "";
+                job.DueAt = due.Value; // 标记为计划任务
+
+                var plan = new ScheduledPrintScheduler.Plan
+                {
+                    DueAt = due.Value,
+                    Job = job,
+                    IdempotencyKey = job.IdempotencyKey,
+                    Note = Str(dt, "note") ?? ""
+                };
+                var saved = ScheduledPrintScheduler.Instance.Add(plan);
+                return Result.success(data: new
+                {
+                    planId = saved.Id,
+                    dueAt = saved.DueAt,
+                    note = saved.Note,
+                    job = saved.Job,
+                    idempotencyKey = saved.IdempotencyKey
+                }, cmd: cmd, msg: "计划任务已排，到点自动入队打印");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        /// <summary>列出全部计划任务（含 pending/done/cancelled 状态与下次触发时间）。</summary>
+        public string ListScheduled(string args)
+        {
+            const string cmd = "ListScheduled";
+            try
+            {
+                var plans = ScheduledPrintScheduler.Instance.GetAll();
+                return Result.success(data: new
+                {
+                    summary = ScheduledPrintScheduler.Instance.Summary(),
+                    count = plans.Count,
+                    plans
+                }, cmd: cmd);
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        /// <summary>撤回某条尚未触发的计划任务。参数：planId。</summary>
+        public string RecallPlan(string args)
+        {
+            const string cmd = "RecallPlan";
+            try
+            {
+                var planId = Str(ParseObject(args), "planId") ?? Str(ParseObject(args), "id");
+                if (string.IsNullOrWhiteSpace(planId))
+                    return Result.error("缺少 planId 字段", 400, cmd);
+                var ok = ScheduledPrintScheduler.Instance.Remove(planId);
+                return ok
+                    ? Result.success(data: new { planId }, cmd: cmd, msg: "计划任务已撤回")
+                    : Result.error("计划任务不存在或已触发", 404, cmd);
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        /// <summary>提前触发某条计划任务（不等 dueAt，立即入队）。参数：planId。</summary>
+        public string NowPlan(string args)
+        {
+            const string cmd = "NowPlan";
+            try
+            {
+                var planId = Str(ParseObject(args), "planId") ?? Str(ParseObject(args), "id");
+                if (string.IsNullOrWhiteSpace(planId))
+                    return Result.error("缺少 planId 字段", 400, cmd);
+                var ok = ScheduledPrintScheduler.Instance.Now(planId);
+                return ok
+                    ? Result.success(data: new { planId }, cmd: cmd, msg: "计划任务已提前触发")
+                    : Result.error("计划任务不存在或已非 pending", 404, cmd);
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        /// <summary>把 dueAt（ISO8601 / Unix 秒 / 本地日期时间）解析为本地 DateTime。</summary>
+        private static DateTime ParseDueAt(string raw)
+        {
+            raw = raw.Trim();
+            if (raw.All(c => c == '.' || char.IsDigit(c)) && raw.Length >= 9 && raw.Length <= 13)
+            {
+                // Unix 秒 / 毫秒
+                var ts = long.Parse(raw);
+                return ts < 10_000_000_000L
+                    ? DateTimeOffset.FromUnixTimeSeconds(ts).UtcDateTime
+                    : DateTimeOffset.FromUnixTimeMilliseconds(ts).UtcDateTime;
+            }
+            // ISO8601 优先（带 Z / +00:00 视为 UTC；无时区视为本地）
+            if (raw.EndsWith("Z", StringComparison.Ordinal))
+                return DateTime.Parse(raw, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal)
+                    .ToLocalTime();
+            if (raw.Contains("+") || raw.Contains("offset") || raw.Contains("-"))
+            {
+                if (DateTimeOffset.TryParse(raw, out var dto))
+                {
+                    var dt = dto.DateTime;
+                    return dto.Offset == TimeSpan.Zero ? dt.ToLocalTime() : dt;
+                }
+            }
+            if (DateTime.TryParseExact(raw, "yyyy-MM-ddTHH:mm:ss",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var exact))
+                return exact;
+            if (DateTime.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+                return parsed;
+            throw new FormatException("无法解析 dueAt: " + raw);
         }
 
         public string ClearQueue(string args)

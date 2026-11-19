@@ -50,6 +50,20 @@ namespace DuoAssistant.Models
         /// <summary>页面奇偶选择：even / odd / 空（全部）。</summary>
         public string PageOrder { get; set; } = "";
         public string Status { get; set; } = JobStatus.Pending;
+        /// <summary>
+        /// 幂等键（可选）。调用方提供去重键，或入队时按 源+打印机+参数 自动派生；
+        /// 相同键的未完成任务已存在时不再重复入队，防高频场景重复出纸 / 重复计费。
+        /// </summary>
+        public string IdempotencyKey { get; set; } = "";
+        /// <summary>批次组（可选）。同一 groupId 的一批任务按序、可分流多设备，支撑批量面单 / 波次。</summary>
+        public string GroupId { get; set; } = "";
+        /// <summary>批次内顺序（从 0 起）。同一 group 内按此排序消费。</summary>
+        public int GroupOrder { get; set; }
+        /// <summary>计划触发时间（UTC）。空=立即；非空且未到点时由排期器到时才入队打印。</summary>
+        public DateTime? DueAt { get; set; }
+        /// <summary>瞬态：本次 Enqueue 因幂等键命中而未真正新增（调用方拿到的是已存在任务）。</summary>
+        [Newtonsoft.Json.JsonIgnore]
+        public bool Deduped { get; set; }
         public DateTime EnqueuedAt { get; set; } = DateTime.Now;
         public DateTime? StartedAt { get; set; }
         public DateTime? FinishedAt { get; set; }

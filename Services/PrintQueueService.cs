@@ -69,16 +69,89 @@ namespace DuoAssistant.Services
             if (job == null) throw new ArgumentNullException(nameof(job));
             if (job.Copies < 1) job.Copies = 1;
             job.Id = Guid.NewGuid().ToString("N");
-            job.Status = JobStatus.Pending;
             job.EnqueuedAt = DateTime.Now;
-            job.StartedAt = null;
-            job.FinishedAt = null;
-            job.Error = "";
-            lock (_gate) _jobs.Add(job);
-            PersistAndNotify();
-            _signal.Release();
-            Tools.Logger("任务入队: " + job.Id + " → " + job.Target);
+
+            // 计划任务：到点才真正进队列。未到时先暂存（持久化，重启不丢），
+            // 工作线程稍后轮询到点释放；已到期（或 DueAt 为空）立即入队并唤醒工作线程。
+            var due = job.DueAt == null || job.DueAt.Value <= DateTime.Now;
+            var immediate = due;
+
+            // 幂等去重：调用方提供 idempotencyKey，或按 源+打印机+参数 自动派生。
+            // 相同键且已存在「未完成（pending/printing）」任务时，不重复入队，直接返回已有任务。
+            if (string.IsNullOrWhiteSpace(job.IdempotencyKey))
+                job.IdempotencyKey = DeriveIdempotencyKey(job);
+            string dedupKey = job.IdempotencyKey;
+            bool deduped = false;
+            lock (_gate)
+            {
+                var dup = _jobs.FirstOrDefault(x =>
+                    x.Id == job.Id ||
+                    (!string.IsNullOrEmpty(dedupKey) &&
+                     x.IdempotencyKey == dedupKey &&
+                     (x.Status == JobStatus.Pending || x.Status == JobStatus.Printing)));
+                if (dup != null)
+                {
+                    // 幂等命中：沿用已有任务；若已有任务尚未开始且本次给了更早的触发时间，更新 DueAt
+                    if (job.DueAt != null && dup.DueAt == null && !due)
+                        dup.DueAt = job.DueAt.Value;
+                    job = dup;
+                    job.Deduped = true;
+                    deduped = true;
+                    immediate = dup.DueAt != null && dup.DueAt.Value <= DateTime.Now;
+                }
+                else
+                {
+                    job.Status = JobStatus.Pending;
+                    job.StartedAt = null;
+                    job.FinishedAt = null;
+                    job.Error = "";
+                    _jobs.Add(job);
+                }
+            }
+            if (deduped)
+            {
+                Tools.Logger("幂等去重: " + dedupKey + " 已存在，跳过重复入队 → " + job.Id);
+                PersistAndNotify();
+                if (immediate && job.DueAt != null)
+                {
+                    // 命中但已到期：补发信号让它参与消费（原来暂存任务没被唤醒）
+                    _signal.Release();
+                }
+                return job.Clone();
+            }
+            if (immediate)
+            {
+                PersistAndNotify();
+                _signal.Release();
+                Tools.Logger("任务入队: " + job.Id + " → " + job.Target);
+            }
+            else
+            {
+                // 计划任务暂存：持久化即可，工作线程轮询到点释放
+                PersistAndNotify();
+                Tools.Logger("计划任务暂存: " + job.Id + " → " + job.Target +
+                             "，到点 " + job.DueAt.Value + " 后自动入队打印");
+            }
             return job.Clone();
+        }
+
+        /// <summary>幂等键派生：源 + 打印机 + 内容特征 + 打印参数（不含 Id/Timestamp），同一请求重复调用得到同一键。</summary>
+        private static string DeriveIdempotencyKey(PrintJob job)
+        {
+            var raw = string.Join("|",
+                job.Source ?? "",
+                job.Target ?? "",
+                job.Printer ?? "",
+                job.Copies,
+                job.Fit, job.Scale, job.PaperKind, job.Pages, job.Duplex,
+                (job.Color.HasValue ? (job.Color.Value ? "c" : "m") : "a"),
+                job.Margin, job.Bin, job.Dpi, job.PageOrder);
+            // SHA1 前 16 字节，稳定且短
+            using var sha = System.Security.Cryptography.SHA1.Create();
+            var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(raw));
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < 16; i++) sb.Append(bytes[i].ToString("x2"));
+            return sb.ToString();
         }
 
         public bool Retry(string id)
@@ -127,6 +200,43 @@ namespace DuoAssistant.Services
             return true;
         }
 
+        /// <summary>
+        /// 召回（可撤回）：把「已入队、尚未开始打印」的任务撤下队列，并记一条审计留痕，
+        /// 供物流中心核对「这单为什么没打 / 被谁撤回」。正在打印（printing）或已出纸的任务无法撤回——
+        /// 裸 RAW / IPP 网络直发一旦出纸即不可撤销，只能靠审计回执追溯，此方法对其返回 false。
+        /// </summary>
+        public string Recall(string id, string reason)
+        {
+            bool found;
+            string status;
+            lock (_gate)
+            {
+                var job = _jobs.FirstOrDefault(x => x.Id == id);
+                found = job != null;
+                if (!found) return "任务不存在: " + id;
+                status = job.Status;
+                if (job.Status == JobStatus.Printing)
+                    return "任务正在打印，无法撤回（出纸后不可撤销，需按审计回执追溯）";
+                // pending / done / failed / cancelled：撤回即标记 cancelled 并留痕
+                job.Status = JobStatus.Cancelled;
+                job.FinishedAt = DateTime.Now;
+                job.Error = "召回: " + (reason ?? "");
+            }
+            PersistAndNotify();
+            try { PrintEventStore.Record("recall:" + id, "Queue", 0, 1, true, "召回撤回，原因: " + (reason ?? "-")); }
+            catch { /* 审计失败不影响撤回动作 */ }
+            return "任务已召回撤下（原状态 " + status + "）";
+        }
+
+        /// <summary>按幂等键查未完成任务（pending/printing）；用于入队前判断是否已存在。</summary>
+        public PrintJob FindByDedupKey(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+            lock (_gate)
+                return _jobs.FirstOrDefault(x => x.IdempotencyKey == key &&
+                    (x.Status == JobStatus.Pending || x.Status == JobStatus.Printing))?.Clone();
+        }
+
         /// <summary>clearFinished=true 只清已完成/失败/取消；false 清空全部（printing 保留）。</summary>
         public int Clear(bool clearFinished)
         {
@@ -152,18 +262,39 @@ namespace DuoAssistant.Services
                 }
                 catch (OperationCanceledException) { break; }
 
-                // 一次信号后持续消费，直到没有 pending 任务
+                // 一次信号后持续消费，直到没有「可立即打印」的任务；计划任务（DueAt 未到）跳过
                 while (!_cts.IsCancellationRequested)
                 {
                     PrintJob next;
+                    int releasedPlan = 0;
                     lock (_gate)
                     {
-                        next = _jobs.FirstOrDefault(x => x.Status == JobStatus.Pending);
+                        var now = DateTime.Now;
+                        // ① 计划任务到点释放：DueAt <= now 的任务标记为可立即打印
+                        foreach (var p in _jobs.Where(x => x.Status == JobStatus.Pending && x.DueAt != null))
+                            if (p.DueAt.Value <= now) { p.DueAt = null; releasedPlan++; }
+
+                        // ② 批次优先：同一 groupId 的 pending 任务按 GroupOrder 顺序消费；
+                        // 无 groupId 的任务保持入队 FIFO。批次内按序，批次之间按组首次出现的 FIFO。
+                        var pending = _jobs.Where(x => x.Status == JobStatus.Pending && x.DueAt == null).ToList();
+                        var grouped = pending.Where(x => !string.IsNullOrEmpty(x.GroupId))
+                            .GroupBy(x => x.GroupId)
+                            .OrderBy(g => g.Min(x => x.EnqueuedAt));
+                        var ungrouped = pending.Where(x => string.IsNullOrEmpty(x.GroupId));
+                        next = null;
+                        bool found = false;
+                        foreach (var g in grouped)
+                        {
+                            var top = g.OrderBy(x => x.GroupOrder).First();
+                            if (top.Status == JobStatus.Pending) { next = top; found = true; break; }
+                        }
+                        if (!found) { next = ungrouped.FirstOrDefault(); found = next != null; }
                         if (next == null) break;
                         next.Status = JobStatus.Printing;
                         next.StartedAt = DateTime.Now;
                         next.Attempts++;
                     }
+                    if (releasedPlan > 0) Tools.Logger("计划任务到点释放: " + releasedPlan + " 个任务进入可打印状态");
                     Notify();
 
                     var outcome = _printService.Print(next);
@@ -233,10 +364,13 @@ namespace DuoAssistant.Services
                         recovered++;
                     }
                 }
+                // 计划任务（DueAt 未到）：暂存不唤醒工作线程，到点后由轮询自动释放
+                int planned = loaded.Count(x => x.Status == JobStatus.Pending && x.DueAt != null && x.DueAt.Value > DateTime.Now);
+                int immediate = loaded.Count(x => x.Status == JobStatus.Pending && (x.DueAt == null || x.DueAt.Value <= DateTime.Now));
                 lock (_gate) _jobs.AddRange(loaded);
                 if (recovered > 0) Tools.Logger("崩溃恢复: " + recovered + " 个任务重置为 pending");
-                // 有待处理任务时唤醒工作线程
-                for (int i = 0; i < _jobs.Count(x => x.Status == JobStatus.Pending); i++) _signal.Release();
+                if (planned > 0) Tools.Logger("计划任务恢复: " + planned + " 个暂存计划任务已载入，到点自动打印");
+                for (int i = 0; i < immediate; i++) _signal.Release();
             }
             catch (Exception ex) { Tools.Logger("队列加载失败: " + ex.Message); }
         }
