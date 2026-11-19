@@ -616,6 +616,57 @@ namespace DuoAssistant.Services
         }
 
         /// <summary>
+        /// 网络打印机智能直发：给定目标 IP（ip，可带端口）与文件（target），本机不装驱动即可打印。
+        /// 文件先渲染为 PDF，再按缓存/自动探测选通道：631 IPP → 9100 RAW 降级；识别结果按 IP 缓存。
+        /// RAW「连接成功即视为可达」（9100 无回执）；IPP 有 Job 回执。都不可达时明示需装驱动。
+        /// 参数：ip（必填，host 或 host:port）、target（文件路径/URL）、copies。
+        /// </summary>
+        public string PrintToIp(string args)
+        {
+            const string cmd = "PrintToIp";
+            try
+            {
+                var dt = ParseObject(args);
+                var ip = Str(dt, "ip") ?? Str(dt, "printer") ?? "";
+                if (string.IsNullOrWhiteSpace(ip))
+                    return Result.error("缺少 ip 字段（目标打印机 IP，可带端口如 192.168.1.10:631）", 400, cmd);
+
+                var target = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(target))
+                    return Result.error("缺少 target 字段（要打印的文件路径或 URL）", 400, cmd);
+                var copies = Math.Max(1, Int(dt, "copies", 1));
+
+                // 构造 job，复用虚拟打印管线把文件渲染成 PDF 字节
+                var job = BuildJob(dt, target);
+                job.Printer = ""; // 网络直发不占本机打印机名
+                var bytes = new NetPrinterService().ToPdfBytes(job, _extended, out var renderedFrom);
+                if (bytes == null)
+                    return Result.error("该文件类型无法渲染为 PDF，不能网络直发：" +
+                        Path.GetExtension(target), 400, cmd,
+                        data: new { hint = "请改用已安装驱动的本机打印机，或先转成 PDF 再发" });
+
+                var outcome = new NetPrinterService().PrintSmart(ip, bytes, copies);
+                if (!outcome.Ok)
+                    return Result.error(outcome.Message, 502, cmd,
+                        data: new { ip, engine = outcome.Engine, detail = outcome.Detail });
+
+                return Result.success(data: new
+                {
+                    ip,
+                    engine = outcome.Engine,
+                    bytes = bytes.Length,
+                    renderedFrom = renderedFrom,
+                    message = outcome.Message,
+                    detail = outcome.Detail
+                }, cmd: cmd, msg: outcome.Message);
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, 502, cmd);
+            }
+        }
+
+        /// <summary>
         /// 只读：检查本机打印机与驱动是否可用。
         /// 只报告状态，不下载、不安装、不修改任何驱动；needsDriver 以 PrinterSettings.IsValid 为真实依据。
         /// </summary>

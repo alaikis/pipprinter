@@ -232,6 +232,15 @@ namespace DuoAssistant.Services
                 return Json(CommandDispatcher.Execute("PrintEscPos", body));
             });
 
+            // 网络打印机智能直发：body {ip, target, copies}；本机不装驱动，自动选 631/IPP 或 9100/RAW
+            app.MapPost("/api/print-to-ip", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("PrintToIp", body));
+            });
+
             app.MapPost("/api/clean/scan", async (HttpContext ctx) =>
             {
                 string body;
