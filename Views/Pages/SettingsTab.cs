@@ -183,8 +183,11 @@ namespace DuoAssistant.Views.Pages
             _webPort.Value = s.WebPort;
             _logLevel.SelectedItem = s.LogLevel ?? "DEBUG";
             if (_logLevel.SelectedIndex < 0) _logLevel.SelectedIndex = 0;
-            var codes = new[] { L10n.Auto, L10n.ZhCn, L10n.En };
-            var langIndex = System.Array.IndexOf(codes, (s.Language ?? L10n.Auto).Trim());
+            var codes = L10n.Supported;
+            var langKey = (s.Language ?? L10n.Auto).Trim().ToLowerInvariant();
+            int langIndex = -1;
+            for (int i = 0; i < codes.Count; i++)
+                if (string.Equals(codes[i], langKey, StringComparison.OrdinalIgnoreCase)) { langIndex = i; break; }
             _language.SelectedIndex = langIndex >= 0 ? langIndex : 0;
             // 默认打印参数
             _defCopies.Value = Math.Min(_defCopies.Maximum, Math.Max(1, s.DefaultCopies));
@@ -251,8 +254,8 @@ namespace DuoAssistant.Views.Pages
             foreach (var line in _whitelist.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                 if (!string.IsNullOrWhiteSpace(line)) list.Add(line.Trim());
 
-            var codes = new[] { L10n.Auto, L10n.ZhCn, L10n.En };
-            var language = _language.SelectedIndex >= 0 && _language.SelectedIndex < codes.Length
+            var codes = L10n.Supported;
+            var language = _language.SelectedIndex >= 0 && _language.SelectedIndex < codes.Count
                 ? codes[_language.SelectedIndex] : L10n.Auto;
 
             var payload = new JObject
