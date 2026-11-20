@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>构建与开发规范 · 荔枝打印助手</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">Lychee Printing Assistant<small>荔枝打印助手 · 开发与使用文档 v2.0</small></div>
+  <nav class="nav">
+    <div class="group">开始</div>
+    <a href="index.html">总览与快速开始</a>
+    <a href="ws.html">WebSocket 协议</a>
+    <a href="api.html">REST API</a>
+    <div class="group">开发</div>
+    <a href="template.html">模板 + 数据打印</a>
+    <a class="active" href="dev.html">构建与开发规范</a>
+    <a href="/api/status">运行状态 (JSON)</a>
+    <a href="/api/commands">命令清单 (JSON)</a>
+  </nav>
+  <div class="sidefoot">.NET 10.0.300 SDK · WinForms</div>
+</aside>
+
+<main class="main">
+  <h1>构建与开发规范</h1>
+  <p class="lead">本项目使用 <code>/impetus</code>（OpenSpec + Superpowers 双星流程）管理变更：OpenSpec 负责 WHAT（提案 / spec 生命周期 / 归档），Superpowers 负责 HOW（设计 / 计划 / 执行 / 验收）。</p>
+
+  <h2>环境要求</h2>
+  <table>
+    <thead><tr><th>项</th><th>要求</th></tr></thead>
+    <tbody>
+      <tr><td>操作系统</td><td>Windows 10 / 11（WinForms + WinSpool + 注册表）</td></tr>
+      <tr><td>SDK</td><td>.NET 10 SDK（最新 LTS），需包含 <code>Microsoft.WindowsDesktop.App</code> 与 <code>Microsoft.AspNetCore.App</code> 共享框架</td></tr>
+      <tr><td>目标框架</td><td><code>net10.0-windows</code></td></tr>
+      <tr><td>外部依赖</td><td>SumatraPDF（随包附带，可自动恢复）；Office/WPS 或图片查看器（非 PDF 类型打印时由系统关联程序接管）</td></tr>
+    </tbody>
+  </table>
+
+  <h2>构建与运行</h2>
+  <pre><code>git clone https://codeup.aliyun.com/alaikis/software/com.alaikis.tools.printer.git
+cd com.alaikis.tools.printer
+
+dotnet restore
+dotnet build -c Release          # 期望 0 warning / 0 error
+dotnet run                       # 启动后驻留系统托盘，主窗口保持隐藏
+dotnet run -- --show             # 首次运行/验收时直接显示主窗口（默认「打印队列」页）
+
+# 发布单文件（可选，本地正式包）
+dotnet publish -c Release -r win-x64 --self-contained true \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+  -p:Version=1.00.002 -p:AssemblyVersion=1.0.2.0 -p:EnableWindowsTargeting=true \
+  -o ./release/publish
+
+# 生成安装向导（NSIS，需本地安装 NSIS 或在 Linux 上 apt install nsis）
+makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrinter.nsi</code></pre>
+  <div class="note">启动后请访问 <code>http://127.0.0.1:19861/api/status</code> 确认 Web 服务就绪；若端口被占用，改 <code>config/appsettings.json</code> 的 <code>webPort</code> 后重启。</div>
+
+  <h2>Gitee 发布流水线（.workflow/pipeline.yml）</h2>
+  <p class="lead">Gitee Go 在 <code>master</code> 推送 <code>v*</code> tag 时自动触发，构建 win-x64 自包含单文件包并创建 Gitee Release，同时上传 <code>latest.json</code> 供客户端自动更新。</p>
+  <ol class="steps">
+    <li>本地：实现完毕 → <code>git commit -m "feat: ..."</code> → <code>git tag -a vX.Y.Z -m "PipPrinter vX.Y.Z"</code> → <code>git push gitee master && git push gitee vX.Y.Z</code></li>
+    <li>Gitee Go 监听 <code>push.tags.prefix=v</code>，触发 <code>.workflow/pipeline.yml</code></li>
+    <li>Stage 1 <code>build@dotnet</code>：dotnet 10.0，<code>dotnet publish -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableWindowsTargeting=true</code>；产出两个制品：<strong>绿色版</strong> <code>PipPrinter-win-x64-v${VERSION}.zip</code> 与 <strong>安装版</strong> <code>PipPrinter-Setup-v${VERSION}.exe</code>（NSIS 双语向导，每用户安装免管理员），并生成 <code>latest.json</code>（含 sha256 + size + url + setupUrl）</li>
+    <li>Stage 2 <code>release@gitee</code>：创建 Gitee Release <code>vX.Y.Z</code>，上传 zip + latest.json</li>
+    <li>客户端：经 Gitee API v5 <code>/repos/alaikiscom/pipprinter/releases/latest</code> 解析最新 Release 的 latest.json 附件直链（Gitee 不支持 GitHub 风格 latest/download 别名），对比 <code>version</code> 与本地，<code>sha256</code> 校验通过后下载替换（旧 exe 改名让位、用户数据不动）</li>
+  </ol>
+  <div class="warn"><strong>首次发布：</strong> 仓库需在 Gitee 控制台开通 <strong>Gitee Go 流水线</strong>，并在仓库「环境变量」配置 GITEE_API_TOKEN（或允许 release@gitee 步骤使用内置发布令牌）。流水线保存后会往 <code>.workflow/</code> 目录提交 yaml。</div>
+
+  <h2>多语言（自动适配）</h2>
+  <p class="lead">UI 支持简体中文 / English。默认 <code>language: "auto"</code>——启动时检测操作系统 UI 语言：<code>zh*</code> → 简体中文，其余语言 → <strong>英文兜底</strong>。可在「设置 → 界面语言」固定为 <code>zh-CN</code> / <code>en</code>（写入 <code>config/appsettings.json</code> 的 <code>language</code> 字段，重启生效）。<code>GET /api/status</code> 返回 <code>language / languageConfigured / languageDetected</code> 三字段便于诊断。</p>
+
+  <h2>本机指纹（跨浏览器 / 会话稳定）</h2>
+  <p>命令 <code>GetMachineFingerprint</code>（WS / <code>POST /api/command</code>）与 REST <code>GET /api/machine</code> 返回 24 位前缀指纹，由 <code>HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid</code> + C 盘卷序列号 + OS 版本 + 当前用户名做 SHA1 生成，并写入 <code>config/appsettings.json</code> 的 <code>machineId</code> 字段。用途：识别「这台机器」并作为打印习惯 / 打印机偏好的 machine-key；跨浏览器、跨账号会话下指纹不变。</p>
+  <pre><code>curl http://127.0.0.1:19861/api/machine
+# { "code":200, "data":{ "machineId":"PP-a1b2c3...", "machineGuid":"...", "volumeSerial":"...", "os":"...", "user":"..." } }</code></pre>
+
+  <h2>目录结构</h2>
+  <div class="tree">com.alaikis.tools.printer/
+├── PipPrinter.csproj        # net10.0-windows + FrameworkReference AspNetCore.App
+├── Program.cs                       # STAThread 入口、单实例 Mutex、WS/Web 启停
+├── Models/
+│   └── PrintJob.cs                  # 队列任务模型 + JobStatus 常量
+├── Services/
+│   ├── SettingsStore.cs             # appsettings.json 读写单例（含目录约定）
+│   ├── CommandDispatcher.cs         # 唯一命令分派入口 + 白名单
+│   ├── PrintServices.cs             # 46 个对外命令实现（含排期/批次/召回/推荐）
+│   ├── PrintQueueService.cs         # 顺序队列、持久化、崩溃恢复、幂等去重、批次按序、计划到点释放
+│   ├── ScheduledPrintScheduler.cs   # 计划任务：本地 5s 轮询 + scheduled.json 持久化 + 崩溃恢复
+│   ├── PrintEventStore.cs           # 打印审计：本地 SQLite 流水，按 host/时间/成败检索与归档
+│   ├── ExtendedPrintService.cs      # 多类型分流打印引擎（PDF/Office/图片/文本/XPS/SVG/OFD）
+│   ├── NativePrintService.cs        # GDI+ 原生打印（图片/文本）+ 虚拟输出到 PDF/XPS
+│   ├── EscPosService.cs             # ESC/POS 热敏小票字节流（本地 RAW / TCP 9100）
+│   ├── XpsWriterService.cs          # 内置 XPS 写入器（WPF，不依赖可选功能）
+│   ├── BarcodeGenerator.cs          # ZXing.Net 条码/二维码生成
+│   ├── PrinterService.cs            # 本机打印机、默认切换、测试页
+│   ├── DiskCleanerService.cs        # 扫描 / 白名单 / 回收站删除
+│   ├── WebServerService.cs          # Kestrel 静态站 + REST + /health
+│   ├── WsHub.cs                     # ASP.NET Core 原生 WebSocket 连接中心
+│   ├── WebsockServerService.cs      # WS 门面 + 队列变更广播
+│   ├── AoClientService.cs           # AO 终端（出站长连接、心跳、自动重连）
+│   └── BaseServices.cs              # 开机自启（HKCU Run）
+├── AoRelay/                         # Active-Online Print 中继服务器（独立控制台项目）
+├── Utils/
+│   ├── Result.cs                    # 统一响应结构
+│   ├── Tools.cs                     # 日志辅助
+│   └── DriverCheck.cs               # SumatraPDF 检测 / 恢复 / 在线下载
+├── Views/
+│   ├── Home.cs / Home.Designer.cs   # 托盘右键菜单 + TabControl 主窗体
+│   ├── Home.resx
+│   └── Pages/                       # 6 个 UserControl 页 + Ui 辅助
+├── config/
+│   ├── appsettings.json             # 端口、白名单、清理策略、命令白名单
+│   └── log4net.config
+├── docs/web/                        # 本文档站（随输出目录复制）
+├── Resource/                        # 图标
+├── pdfreader/SumatraPDF.exe         # 随包 PDF 打印驱动
+├── openspec/                        # OpenSpec 配置 + 变更 + 归档
+│   └── changes/printer-desktop-enhancement/
+├── docs/superpowers/                # 计划 / 方案 / 验收报告
+└── .impetus/config.yaml             # 双星流程项目状态</div>
+
+  <h2>/impetus 开发规范</h2>
+  <p>阶段流转固定为 <strong>open → design → build → verify → archive</strong>；方案类变更为 <strong>open → design → review → published</strong>。每个活跃 change 在 <code>.impetus.yaml</code> 里记录 <code>phase</code>、<code>build_mode</code>、<code>isolation</code>、<code>build_pause</code>。</p>
+  <table>
+    <thead><tr><th>产物</th><th>位置</th><th>要求</th></tr></thead>
+    <tbody>
+      <tr><td>提案 proposal.md</td><td><code>openspec/changes/&lt;name&gt;/</code></td><td>含 Why / What / Impact / <strong>Non-goals</strong> / <strong>Risks</strong>；正文 ≤ 500 字</td></tr>
+      <tr><td>设计 design.md</td><td>同上</td><td>含 <strong>Decisions / Alternatives / Consequences / Verification</strong>；UI 决策给可截图验收标准</td></tr>
+      <tr><td>任务 tasks.md</td><td>同上</td><td>复选框 <code>- [ ]</code>，单任务 ≤ 2 小时且可独立验证</td></tr>
+      <tr><td>增量 spec</td><td><code>…/specs/&lt;name&gt;/spec.md</code></td><td><code>## ADDED / MODIFIED / REMOVED Requirements</code> 三段式，每条 Requirement 带 <code>### Scenario:</code></td></tr>
+      <tr><td>状态 .impetus.yaml</td><td>change 根目录</td><td>由 guard 维护，断点恢复时重跑 Step 0/Step 1 判定阶段</td></tr>
+    </tbody>
+  </table>
+  <p>提交约定：<code>git commit -m "feat(&lt;change&gt;): 中文描述"</code>；<code>issue_id</code> 为 null 时不自动提交。</p>
+
+  <h2>新增一个命令（推荐做法）</h2>
+  <ol class="steps">
+    <li>在 <code>PrintServices.cs</code> 增加 <code>public string Xxx(string args)</code>：用 <code>ParseObject(args)</code> 取参数，成功返回 <code>Result.success(...)</code>，失败返回 <code>Result.error(...)</code>。</li>
+    <li>把命令名加入 <code>SettingsStore.Defaults().AllowedCommands</code> 和旧配置升级兼容数组（见 <code>SettingsStore.Load()</code>），否则网络调用返回 403；已有安装由升级兼容数组自动补齐，无需用户手动改 <code>config/appsettings.json</code>。改完调用 <code>CommandDispatcher.ResetCache()</code> 或重启。</li>
+    <li>在 delta spec 里补 <code>## ADDED Requirements</code> + <code>### Scenario:</code>，在 <code>tasks.md</code> 勾选对应任务。</li>
+    <li>WS 与 <code>POST /api/command</code> 自动可获得该能力；如需便捷端点，在 <code>WebServerService.MapApi</code> 增加 <code>app.MapPost</code>。</li>
+    <li>更新 <a href="ws.html">ws.html</a> / <a href="api.html">api.html</a> 的命令表与示例。</li>
+  </ol>
+  <div class="note"><strong>单一分派入口：</strong> UI、WebSocket、REST 全部调用 <code>CommandDispatcher.Execute</code>，不要在页面里另写一套业务逻辑。这样命令行为一致、白名单统一、文档不漂移。</div>
+
+  <h2>配置项参考</h2>
+  <table>
+    <thead><tr><th>键</th><th>默认</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>webHost / webPort</code></td><td><code>0.0.0.0 / 19861</code></td><td>Kestrel 统一端口：文档站、REST 与 WebSocket <code>/ws</code> 共用；建议生产改 <code>127.0.0.1</code> 或限制防火墙</td></tr>
+      <tr><td><code>defaultPrinter</code></td><td><code>""</code></td><td>空 = 跟随系统默认</td></tr>
+      <tr><td><code>language</code></td><td><code>auto</code></td><td>界面语言：<code>auto</code>（检测系统 UI 语言，<code>zh*</code> → 简中，其余英文兜底）/ <code>zh-CN</code> / <code>en</code>，重启生效</td></tr>
+      <tr><td><code>machineId</code></td><td><code>""</code></td><td>本机指纹持久化值（首次调用 <code>GetMachineFingerprint</code> 时写入）</td></tr>
+      <tr><td><code>updateManifestUrl</code></td><td>Gitee latest</td><td>自动更新清单地址（Gitee API v5 解析 Release 附件直链）</td></tr>
+      <tr><td><code>aoEnabled / aoRelayUrl</code></td><td><code>false / ws://127.0.0.1:8081</code></td><td>AO 终端开关与中继地址；设置页启用后立即生效</td></tr>
+      <tr><td><code>aoKey / aoDeviceName</code></td><td><code>"" / ""</code></td><td>AO 共享密钥（留空不校验）/ 中继内唯一设备名（缺省用机器名）</td></tr>
+      <tr><td><code>ofdConverter</code></td><td><code>""</code></td><td>OFD 转换器路径；配置后 <code>.ofd</code>（电子发票）先转 PDF 再打印，否则交给系统关联程序</td></tr>
+      <tr><td><code>autoStart</code></td><td><code>true</code></td><td>写 HKCU Run，无需管理员权限</td></tr>
+      <tr><td><code>logLevel</code></td><td><code>DEBUG</code></td><td>UI 展示用；log4net 分级 appender 见 log4net.config</td></tr>
+      <tr><td><code>cleanMaxAgeDays</code></td><td><code>7</code></td><td>只扫描超过该天数的文件</td></tr>
+      <tr><td><code>cleanMinSizeMB</code></td><td><code>1</code></td><td>小于该体积的文件不纳入扫描</td></tr>
+      <tr><td><code>tempAutoCleanMaxAgeDays</code></td><td><code>7</code></td><td>启动时自动删除应用 <code>temp/</code> 下超过该天数的文件；<code>0</code> = 关闭。仅作用于应用自产临时文件，不碰系统 Temp</td></tr>
+      <tr><td><code>useRecycleBin</code></td><td><code>true</code></td><td>删除时移入回收站</td></tr>
+      <tr><td><code>cleanWhitelist</code></td><td>系统目录 / 桌面 / 文档 / 下载 / AppData</td><td>保护目录，支持环境变量</td></tr>
+      <tr><td><code>allowedCommands</code></td><td>46 项</td><td>命令白名单（WS / REST / UI 共用）；新增命令必须同时加入 <code>SettingsStore.Defaults()</code> 与升级兼容数组，否则网络调用返回 403</td></tr>
+    </tbody>
+  </table>
+
+  <h2>依赖矩阵（全部最新稳定版）</h2>
+  <table>
+    <thead><tr><th>依赖</th><th>旧版</th><th>当前</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>目标框架</td><td><code>net8.0-windows</code></td><td><code>net10.0-windows</code> <span class="badge ok">LTS</span></td><td>最新长期支持版</td></tr>
+      <tr><td>Fleck</td><td>1.2.0</td><td><strong>已移除</strong></td><td>2018 年停维护、纯服务端无客户端实现、不支持原生 TLS；WebSocket 已迁移到 ASP.NET Core 原生实现（WS 与 Web 共用 19861 端口 <code>/ws</code>，一条反代规则即可上 TLS）</td></tr>
+      <tr><td>ZXing.Net</td><td>—</td><td>0.16.10</td><td>条码/二维码原生生成（<code>qr</code>/<code>code128</code>/…/<code>datamatrix</code>/<code>aztec</code>）</td></tr>
+      <tr><td>iTextSharp</td><td>5.5.13.3</td><td>5.5.13.6</td><td>保留为 PDF 内容解析扩展点；NU1701 已知（.NET Framework 兼容包）</td></tr>
+      <tr><td>log4net</td><td>2.0.17</td><td>2.0.17</td><td>2.x 最新稳定；v3 改命名空间且会破坏现有 appender 配置</td></tr>
+      <tr><td>Newtonsoft.Json</td><td>13.0.3</td><td>13.0.4</td><td>最新稳定（14.x 仍为 beta）</td></tr>
+      <tr><td>Microsoft.Extensions.Logging.Log4Net.AspNetCore</td><td>8.0.0</td><td><strong>已移除</strong></td><td>项目从未使用 <code>AddLog4Net()</code>；其 10.0.0 强制依赖 log4net ≥3.3.0，8.0.0 会把 ASP.NET Core 8 程序集带入 net10 应用</td></tr>
+      <tr><td>ASP.NET Core (Kestrel)</td><td>—</td><td>随 .NET 10 共享框架</td><td>通过 <code>FrameworkReference</code> 引入，无需 NuGet 版本号</td></tr>
+    </tbody>
+  </table>
+
+  <h2>本次变更摘要</h2>
+  <ul>
+    <li>产品定名：英文名 <strong>Lychee Printing Assistant</strong>，中文名 <strong>荔枝打印助手</strong>；程序集 / 项目 / 解决方案保持 <code>PipPrinter</code>（避免破坏更新器 / 快捷方式 / 注册表路径），可执行文件 <code>PipPrinter.exe</code>，应用与托盘图标为荔枝主题 <code>Resource\app.ico</code> / <code>Resource\tray.ico</code></li>
+    <li>主窗口默认展示「打印队列」页；双击托盘图标显示主窗口（不再切换隐藏），最小化/关闭收回托盘</li>
+    <li>升级 .NET 8 → .NET 10 LTS，依赖升级到各自最新稳定版并移除冲突死依赖</li>
+    <li>托盘新增 8 项右键菜单；主窗体改为 6 页 TabControl（打印 / 队列 / 打印机 / 磁盘清理 / 设置 / 日志）</li>
+    <li>新增持久化打印队列（顺序消费、失败重试、崩溃恢复、WS 主动推送）</li>
+    <li>新增本机打印机列表与驱动信息、默认切换、测试页</li>
+    <li>新增安全的磁盘清理（白名单、试运行、回收站、导出清单）</li>
+    <li>打印类型从 PDF 扩展到 23 种扩展名，按类型分流到 SumatraPDF / Shell / 无头浏览器</li>
+    <li>新增内嵌 ASP.NET Core 文档站与 REST API</li>
+    <li>反射分派收敛为命令白名单；单实例 Mutex；开机自启改 HKCU 并修正 exe 路径</li>
+  </ul>
+  <p><strong>后续增强（当前版本）：</strong></p>
+  <ul>
+    <li>WebSocket 迁移到 <strong>ASP.NET Core 原生</strong>（<code>WsHub</code>）：与 Web 文档/REST 共用 19861 端口 <code>/ws</code>，移除 Fleck，一条反代规则即可上 TLS；新增 <code>/health</code> 探活端点</li>
+    <li>打印方式扩展：<strong>GDI+ 原生打印</strong>（图片/文本，含多帧 TIFF/GIF 逐页）、<strong>ESC/POS 热敏小票</strong>（本地 RAW / TCP 9100）、<strong>虚拟打印到 PDF/XPS</strong>、<strong>XPS 文档打印</strong>（内置 WPF 写入器，不依赖可选功能）</li>
+    <li>文件类型扩展：新增 <code>.svg</code> / <code>.xps</code> / <code>.ofd</code>（电子发票，可配转换器）；Office 原生解析经 LibreOffice headless 转 PDF</li>
+    <li><strong>条码/二维码原生生成</strong>（ZXing.Net，13 种码制），PNG 经 SumatraPDF 直出</li>
+    <li><strong>Active-Online Print</strong>：自建 <code>AoRelay</code> 中继 + 终端出站长连接（hello 注册 / 30s 心跳 / 指数退避重连 / 白名单执行），支持广域网远程打印</li>
+    <li>多语言：自动检测系统 UI 语言（<code>zh*</code> → 简中，其余英文兜底），可在设置页固定</li>
+    <li>临时文件治理：新增 <code>CleanAppTemp</code> 一键清理应用自产临时文件；启动时按 <code>tempAutoCleanMaxAgeDays</code>（默认 7 天，0=关闭）自动清理；扫描改为每根目录独立配额（默认 500），系统 Temp 不再挤掉应用目录</li>
+    <li>许可证：<strong>木兰宽松许可证 Mulan PSL-2.0</strong>（OSI 认证、中国自主知识产权、商业友好）</li>
+    <li>品牌与 UI：荔枝红主题（Wise 风格设计语言）+ 荔枝主题应用/托盘图标</li>
+  </ul>
+
+  <div class="footer">Lychee Printing Assistant / 荔枝打印助手 v2.0 · /impetus（OpenSpec + Superpowers）</div>
+</main>
+</div>
+</body>
+</html>

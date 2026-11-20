@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>模板+数据打印 · 荔枝打印助手</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">Lychee Printing Assistant<small>荔枝打印助手 · 开发与使用文档 v2.0</small></div>
+  <nav class="nav">
+    <div class="group">开始</div>
+    <a href="index.html">总览与快速开始</a>
+    <a href="ws.html">WebSocket 协议</a>
+    <a href="api.html">REST API</a>
+    <a class="active" href="template.html">模板 + 数据打印</a>
+    <div class="group">开发</div>
+    <a href="dev.html">构建与开发规范</a>
+    <a href="/api/status">运行状态 (JSON)</a>
+    <a href="/api/commands">命令清单 (JSON)</a>
+  </nav>
+  <div class="sidefoot">Kestrel / ASP.NET Core 10 · 端口 19861</div>
+</aside>
+
+<main class="main">
+  <h1>模板 + 数据打印</h1>
+  <p class="lead">面单 / 标签场景：<strong>JSON 请求信封</strong>（<code>template</code> + <code>data</code> + 打印参数）→ 客户端把 <code>data</code> 替换进 <code>template</code> 的 <code>{{占位符}}</code> → <strong>HTML 转 PDF</strong> → 打印。HTML 是版面（CSS 像素级锁定 100×150 / A4 等尺寸），JSON 是参数信封，二者解耦。</p>
+
+  <div class="note"><strong>为什么用 HTML 而不是 XML：</strong>客户端内置 HTML 打印链路（无头浏览器 <code>--print-to-pdf</code> → SumatraPDF），版面在转 PDF 时即固化，跨驱动一致；XML/XSL-FO 无现成打印链路、调版面累。面单系统本身多为 Web 技术栈，模板即 HTML 组件，零转换。</div>
+
+  <h2>请求信封（JSON）</h2>
+  <p>命令 <code>TemplatePrint</code>，经 <a href="api.html">REST <code>/api/command</code></a> 或 <a href="ws.html">WebSocket</a> 下发。字段：</p>
+  <table>
+    <thead><tr><th>字段</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>template</code></td><td>string</td><td>是</td><td>HTML 模板。三种形态：<strong>内联文本</strong> / <strong>本地文件路径</strong> / <strong>URL（CDN/S3 直链）</strong></td></tr>
+      <tr><td><code>data</code></td><td>object</td><td>否</td><td><code>{{key}}</code> → 值。值自动做 HTML 转义，防止订单数据里的 <code>&lt; &amp; " </code> 破坏版面或注入</td></tr>
+      <tr><td><code>printer</code></td><td>string</td><td>否</td><td>目标打印机；留空走默认 / 自动分流</td></tr>
+      <tr><td><code>paperKind</code></td><td>string</td><td>否</td><td>纸张：<code>A4</code>/<code>100mm x 150mm</code> 自定义毫米等，配合尺寸匹配引擎</td></tr>
+      <tr><td><code>copies</code></td><td>int</td><td>否</td><td>份数，默认 1</td></tr>
+      <tr><td><code>fit</code></td><td>string</td><td>否</td><td><code>fit</code>/<code>shrink</code>/<code>noscale</code>，默认 <code>fit</code></td></tr>
+      <tr><td><code>scale</code></td><td>string</td><td>否</td><td><code>portrait</code>/<code>landscape</code></td></tr>
+      <tr><td><code>printPages</code></td><td>string</td><td>否</td><td>页码范围，默认 <code>1-</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>三种 template 形态</h2>
+  <div class="grid">
+    <div class="card"><h3>内联 HTML</h3><p><code>template</code> 直接是 HTML 字符串。适合短模板、调试、测试页。</p></div>
+    <div class="card"><h3>本地文件</h3><p><code>template</code> 是已存在文件路径（<code>.html</code>/<code>.htm</code>）。适合预置模板包。</p></div>
+    <div class="card"><h3>URL（CDN/S3）</h3><p><code>template</code> 是 <code>https://tpl.cdn.com/waybill/100x150.html</code>。客户端自动下载再渲染。<strong>模板放 CDN 直链，JSON 只传业务参数</strong>——模板改版不动客户端。</p></div>
+  </div>
+
+  <h2>示例：面单（100×150）</h2>
+  <pre><code>{
+  "cmd": "TemplatePrint",
+  "template": "https://tpl.example.com/waybill/100x150.html",
+  "data": {
+    "单号": "SF20261114001",
+    "收件人": "张三",
+    "收件电话": "13800000000",
+    "收件地址": "上海 浦东新区 张江高科技园区 88 号",
+    "寄件地址": "深圳 南山区 科技园 1 号",
+    "qr": "SF20261114001"
+  },
+  "paperKind": "100mm x 150mm",
+  "copies": 1,
+  "fit": "fit"
+}</code></pre>
+
+  <h3>对应 HTML 模板（100×150）</h3>
+  <pre><code>&lt;div style="width:100mm;height:150mm;box-sizing:border-box;
+            padding:4mm;font:12px/1.5 'Microsoft YaHei'&gt;
+  &lt;h3 style="margin:0 0 2mm"&gt;{{单号}}&lt;/h3&gt;
+  &lt;p&gt;寄：{{寄件地址}}&lt;/p&gt;
+  &lt;p&gt;收：{{收件人}} &lt;span style="font-weight:700"&gt;{{收件电话}}&lt;/span&gt;&lt;/p&gt;
+  &lt;p&gt;{{收件地址}}&lt;/p&gt;
+  &lt;img src="{{qr}}" style="position:absolute;right:4mm;bottom:4mm;width:22mm;height:22mm"/&gt;
+&lt;/div&gt;</code></pre>
+
+  <div class="note"><strong>占位符规则：</strong>只有 <code>data</code> 里存在的键会被替换；未出现的 <code>{{key}}</code> 保持原样。替换值已 HTML 转义（对象/数组先序列化为 JSON 文本再转义）。</div>
+
+  <h2>二维码：本地生成，不依赖外网</h2>
+  <p><code>data.qr</code> 传二维码<b>数据</b>（如单号），客户端用内置 <code>zxing</code> 在本地出码，替换进 <code>{{qr}}</code> 的 <code>data:image/png</code>。面单系统无需上传图片、不依赖外网 CDN 可达——<strong>断网也能打</strong>。模板里写 <code>&lt;img src="{{qr}}"&gt;</code> 即可。</p>
+
+  <h2>尺寸匹配与自动分流（面单 + A4 混带）</h2>
+  <p>面单多类型（100×150 / 100×180 / 75×130 …）+ 偶发 A4。不想频繁手动换打印机时，靠 <code>paperKind</code> + 打印机实际纸张能力自动分流：</p>
+  <table>
+    <thead><tr><th>需求</th><th>可用纸张</th><th>匹配度</th><th>处理</th></tr></thead>
+    <tbody>
+      <tr><td>100×150 面单</td><td>100×150</td><td><span class="badge ok">100%</span></td><td>直打，最稳</td></tr>
+      <tr><td>100×150 面单</td><td>100×180</td><td><span class="badge ok">高（容差 30mm）</span></td><td>按 100×180 介质打，内容区 100×150，上下留白——可用，非 100% 匹配但成品不跑版</td></tr>
+      <tr><td>A4 单据</td><td>A4</td><td><span class="badge ok">100%</span></td><td>直打</td></tr>
+      <tr><td>100×150 面单</td><td>仅 A4</td><td><span class="badge warn">低</span></td><td>缩放/A4 留白 或 挂起待人工</td></tr>
+    </tbody>
+  </table>
+  <div class="warn"><strong>非 100% 匹配策略：</strong>宽度优先精确匹配，高度差在容差内（默认 30mm）判为可用并按介质实际尺寸出图；超出容差则降级（缩放 or 挂起）。同批同尺寸面单路由到同一台，避免反复切换打印机。</div>
+
+  <h2>稳定性：HTML → PDF 链路</h2>
+  <p>模板渲染产物先进入 <code>temp/</code>，再由无头浏览器 <code>--print-to-pdf</code> 固化为 PDF，最后经 SumatraPDF 打印。版面在转 PDF 时即锁定，与打印驱动解耦。</p>
+  <div class="steps">
+    <li>客户端收到 <code>TemplatePrint</code>，按 <code>template</code> 形态取模板（URL 则下载）</li>
+    <li>用 <code>data</code> 做 <code>{{占位符}}</code> 替换（值已 HTML 转义），写入 <code>temp/xxx.html</code></li>
+    <li>无头浏览器 <code>--print-to-pdf</code> 生成 <code>temp/xxx.pdf</code></li>
+    <li>SumatraPDF 按 <code>paperKind</code>/<code>fit</code>/<code>copies</code> 打印，结果入队（<a href="api.html"><code>/api/queue</code></a> 可查）</li>
+  </div>
+
+  <h2>与云端的配合（SaaS / 独立部署）</h2>
+  <p>云端（Golang 后端 + 内嵌 Next.js）负责：<strong>模板库管理</strong>（上传 HTML 模板 → S3 兼容存储 + CDN 域名）、<strong>订单→参数 JSON 组装</strong>、<strong>设备注册与鉴权</strong>。客户端只认「模板 URL + data JSON」，存储后端（OSS/COS/MinIO/R2）可互换，<strong>客户端零改动</strong>。</p>
+  <pre><code>面单系统/中台 ── 订单+参数 JSON ──► 云端 Go 服务 ── 选模板(CDN URL)
+                                              │
+   客户端 ◄── TemplatePrint(template=URL, data=…) ◄┘
+   （自动下载模板 + 替换 + 转PDF + 打印 + 结果回传）</code></pre>
+</main>
+</div>
+</body>
+</html>

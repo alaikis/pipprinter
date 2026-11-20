@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WebSocket 协议 · 荔枝打印助手</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">Lychee Printing Assistant<small>荔枝打印助手 · 开发与使用文档 v2.0</small></div>
+  <nav class="nav">
+    <div class="group">开始</div>
+    <a href="index.html">总览与快速开始</a>
+    <a class="active" href="ws.html">WebSocket 协议</a>
+    <a href="api.html">REST API</a>
+    <a href="template.html">模板 + 数据打印</a>
+    <div class="group">开发</div>
+    <a href="dev.html">构建与开发规范</a>
+    <a href="/api/status">运行状态 (JSON)</a>
+    <a href="/api/commands">命令清单 (JSON)</a>
+  </nav>
+  <div class="sidefoot">ASP.NET Core 原生 WebSocket · 端口 19861</div>
+</aside>
+
+<main class="main">
+  <h1>WebSocket 协议</h1>
+  <p class="lead">连接 <code>ws://&lt;host&gt;:19861/ws</code>，发送一个 JSON 对象，<code>cmd</code> 指定命令，其余字段为该命令参数。服务端同步返回一条 JSON 响应。</p>
+
+  <div class="note">
+    WebSocket 与 Web 文档服务<strong>共用同一个 Kestrel 端口（19861）</strong>，路径固定为 <code>/ws</code>，
+    由 ASP.NET Core 原生 <code>WebSocket</code> 实现接管（已移除第三方 Fleck 依赖，支持自动 TLS）。
+    连接建立后服务端会主动推送一条 <code>operator: "startPrint"</code> 的欢迎消息。之后每当打印队列变化，会向所有连接推送 <code>operator: "QueueChanged"</code> 快照。
+  </div>
+
+  <h2>服务健康检查</h2>
+  <pre><code>curl http://127.0.0.1:19861/health</code></pre>
+  <p>返回 <code>status</code>、<code>app</code>、<code>version</code>、<code>uptimeSeconds</code>、<code>web</code>、<code>ws</code>、<code>wsConnections</code>、<code>aoOnline</code>、<code>queue</code>，可用于负载均衡与存活探针。</p>
+
+  <h2>响应结构（所有命令统一）</h2>
+  <pre><code>{
+  "code": 200,                    // 200 成功 / 400 参数错误 / 403 命令禁止 / 404 未实现 / 500 异常
+  "timestamp": "1763019000",     // Unix 秒
+  "data": { ... },               // 命令返回数据
+  "error": "success",            // 失败时为错误信息
+  "operator": "PrintFile",       // 回显命令名
+  "uuid": "9f3c...",             // 本次响应唯一 ID
+}</code></pre>
+  <p><code>code</code> 非 200 时请读 <code>error</code>；<code>data</code> 可能为 <code>null</code>。</p>
+
+  <h2>命令清单</h2>
+  <table>
+    <thead><tr><th>cmd</th><th>作用</th><th>主要参数</th></tr></thead>
+    <tbody>
+      <tr><td><code>PrintPdf</code></td><td>原有 PDF 打印命令（兼容保留）</td><td><code>label</code>、<code>printer</code>、<code>copies</code>、<code>fit</code>、<code>scale</code>、<code>paperKind</code>、<code>printPages</code></td></tr>
+      <tr><td><code>PrintFile</code></td><td>同步打印任意受支持文件 / URL</td><td><code>path</code>（也可用 <code>label</code>/<code>url</code>）、<code>printer</code>、<code>copies</code> …</td></tr>
+      <tr><td><code>PrintBarcode</code></td><td>生成条码/二维码并直接打印（SumatraPDF 直出）</td><td><code>value</code>（必填）、<code>format</code>（<code>qr</code>/<code>code128</code>/<code>code39</code>/<code>code93</code>/<code>ean13</code>/<code>ean8</code>/<code>upca</code>/<code>itf</code>/<code>codabar</code>/<code>msi</code>/<code>pdf417</code>/<code>datamatrix</code>/<code>aztec</code>）、<code>width</code>/<code>height</code>（px，默认 400）、<code>caption</code>（可选文字）、<code>printer</code>、<code>copies</code>、<code>paperKind</code></td></tr>
+      <tr><td colspan="3" style="color:var(--muted);font-size:.92em">纸张参数 <code>paperKind</code>：支持 <code>A0</code>–<code>A5</code>、<code>letter</code>/<code>legal</code>/<code>tabloid</code>/<code>statement</code>、<code>auto</code>（按页面尺寸）、<code>"210mm x 297mm"</code> 自定义尺寸或驱动报告名。其中 <code>A0</code>/<code>A1</code> 自动换算为 ISO 216 毫米尺寸（841×1189 / 594×841），大幅面实际输出需打印机驱动支持。</td></tr>
+      <tr><td><code>TemplatePrint</code></td><td>模板渲染后入队打印</td><td><code>template</code>（文本或文件路径）、<code>data</code>（<code>{{key}}</code> 占位符）</td></tr>
+      <tr><td><code>PrintToPdf</code></td><td>打印到 PDF 文件（Microsoft Print to PDF 虚拟打印机）</td><td><code>path</code>、<code>output</code>（输出路径，缺省落 <code>temp/</code>）、<code>printer</code> …</td></tr>
+      <tr><td><code>PrintToXps</code></td><td>打印到 XPS 文件（图片/文本用内置写入器，其余回退虚拟打印机）</td><td><code>path</code>、<code>output</code>、<code>printer</code> …</td></tr>
+      <tr><td><code>PrintEscPos</code></td><td>ESC/POS 热敏小票原始打印（文本/一维码/二维码直发字节流）</td><td><code>printer</code>（本地名或 <code>host:port</code> TCP 9100）、<code>text</code>、<code>encoding</code>（默认 <code>GB2312</code>）、<code>align</code>、<code>bold</code>、<code>barcode</code>/<code>barcodeFormat</code>、<code>qrcode</code>、<code>cashDrawer</code>、<code>feed</code>、<code>cut</code></td></tr>
+      <tr><td><code>QueuePrint</code></td><td>加入打印队列，返回 <code>jobId</code></td><td>同 <code>PrintFile</code>；另支持 <code>groupId</code>/<code>groupOrder</code>（批次按序）、<code>dueAt</code>（到点才打印）、<code>idempotencyKey</code>（幂等防重，命中返回 <code>deduped:true</code>）</td></tr>
+      <tr><td><code>GetQueue</code></td><td>查询全部任务与队列摘要</td><td>—</td></tr>
+      <tr><td><code>RetryJob</code></td><td>失败任务重试并前置</td><td><code>id</code></td></tr>
+      <tr><td><code>CancelJob</code></td><td>取消等待中的任务</td><td><code>id</code></td></tr>
+      <tr><td><code>ClearQueue</code></td><td>清空队列</td><td><code>finishedOnly</code>（默认 true）</td></tr>
+      <tr><td><code>SchedulePrint</code></td><td>排一个计划任务，到点自动入队打印（持久化，重启不丢）</td><td><code>dueAt</code>（ISO8601 带时区 / Unix 秒 / 本地时间，必填）、<code>job</code>（PrintJob 对象）或平铺字段、<code>idempotencyKey</code>、<code>note</code>。返回 <code>planId</code></td></tr>
+      <tr><td><code>ListSchedulePlans</code></td><td>列出全部计划任务及摘要</td><td>—</td></tr>
+      <tr><td><code>RemoveSchedulePlan</code></td><td>撤回未触发的计划；<code>now:true</code> 则提前触发</td><td><code>planId</code>、<code>now</code>（默认 false）</td></tr>
+      <tr><td><code>PrintBatch</code></td><td>批量/波次打印：整批同组按序入队，复用幂等与断网补打</td><td><code>jobs</code>（PrintJob 数组，必填）、<code>groupId</code>、<code>idempotencyKey</code>（前缀，按序加 <code>:index</code>）、<code>dueAt</code>。返回 <code>groupId</code>/<code>jobIds</code>/<code>deduped</code></td></tr>
+      <tr><td><code>RecallJob</code></td><td>召回撤回未开始打印的任务并记审计；printing 不可撤回</td><td><code>id</code>（jobId）、<code>reason</code></td></tr>
+      <tr><td><code>RecommendPlan</code></td><td>智能推荐错峰时段：基于近 14 天真实打印审计流水，无历史则按默认策略</td><td><code>count</code>（1-200）、<code>printer</code>（可选过滤 host）、<code>withinHours</code>（1-72，默认 8）、<code>startAt</code>。返回 <code>basedOn</code>（history/default）与 <code>slots</code></td></tr>
+      <tr><td><code>GetPrinterList</code></td><td>打印机名数组 + 默认 + 详情</td><td>—</td></tr>
+      <tr><td><code>GetPrinterDetail</code></td><td>仅返回详情数组</td><td>—</td></tr>
+      <tr><td><code>SetDefaultPrinter</code></td><td>切换系统默认打印机</td><td><code>printer</code></td></tr>
+      <tr><td><code>PrintTestPage</code></td><td>打印测试页</td><td><code>printer</code>（可空，用当前默认）</td></tr>
+      <tr><td><code>GetPdfDriverConfig</code></td><td>读取 SumatraPDF 配置</td><td>—</td></tr>
+      <tr><td><code>SetPdfPrintDriverConfig</code></td><td>写入 SumatraPDF 配置</td><td><code>config</code></td></tr>
+      <tr><td><code>ScanDisk</code></td><td>扫描可清理文件</td><td><code>maxAgeDays</code>、<code>minSizeMB</code></td></tr>
+      <tr><td><code>CleanDisk</code></td><td>清理文件（默认 dryRun）</td><td><code>paths</code>、<code>dryRun</code>、<code>useRecycleBin</code></td></tr>
+      <tr><td><code>CleanAppTemp</code></td><td>清理应用自产临时文件（temp/ 目录，条码 PNG / ESC/POS dump / 转换中间件等）</td><td><code>maxAgeDays</code>（默认 0=不限）、<code>minSizeMB</code>（默认 0=不限大小）、<code>dryRun</code>（默认 true）、<code>useRecycleBin</code>。先 <code>dryRun</code> 拿数量，再 <code>dryRun:false</code> 真正删除（默认走回收站）</td></tr>
+      <tr><td><code>GetDiskInfo</code></td><td>磁盘容量概览</td><td>—</td></tr>
+      <tr><td><code>GetSettings</code></td><td>读取当前配置</td><td>—</td></tr>
+      <tr><td><code>SaveSettings</code></td><td>部分更新配置</td><td>任意配置字段</td></tr>
+      <tr><td><code>GetStatus</code></td><td>运行时状态、版本、支持类型、队列摘要</td><td>—</td></tr>
+      <tr><td><code>GetMachineFingerprint</code></td><td>本机指纹（MachineGuid + 卷序列号 + OS + 用户 SHA1）</td><td>—</td></tr>
+      <tr><td><code>CheckUpdate</code></td><td>拉取 Gitee latest.json 对比版本（不下载）</td><td>—</td></tr>
+      <tr><td><code>ApplyUpdate</code></td><td>下载、校验 SHA256、替换当前目录</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p>完整实时清单：<a href="/api/commands"><code>GET /api/commands</code></a>。只有在 <code>config/appsettings.json</code> 的 <code>allowedCommands</code> 中的命令才可被网络调用。</p>
+
+  <h2>示例：打印一个 PDF</h2>
+  <pre><code>// 发送
+{"cmd":"PrintPdf","label":"https://example.com/label.pdf","printer":"HP LaserJet","copies":2,"fit":"fit","scale":"portrait","printPages":"1-"}
+
+// 响应
+{"code":200,"timestamp":"1763019000","data":{"label":"...","printer":"HP LaserJet","engine":"SumatraPDF","message":"已提交到打印机 HP LaserJet"},"error":"print successful!","operator":"Print","uuid":"..."}</code></pre>
+  <p>兼容旧客户端：若 <code>label</code> 以 <code>//</code> 开头会自动补 <code>https:</code>；无协议但形似域名也会补 <code>https://</code>。本地绝对路径不会被误判为 URL。</p>
+
+  <h2>示例：加入队列并轮询</h2>
+  <pre><code>// 1) 入队
+{"cmd":"QueuePrint","path":"C:\\labels\\a.docx","printer":"HP LaserJet","copies":1}
+// → {"code":200,"data":{"jobId":"3f9a...","job":{...,"status":"pending"}}, ...}
+
+// 2) 查询
+{"cmd":"GetQueue"}
+// → {"code":200,"data":{"jobs":[...],"summary":{"total":1,"pending":0,"printing":0,"done":1,"failed":0}}, ...}
+
+// 3) 失败重试
+{"cmd":"RetryJob","id":"3f9a..."}</code></pre>
+
+  <h2>示例：模板打印</h2>
+  <pre><code>{"cmd":"TemplatePrint",
+ "template":"&lt;h1&gt;订单 {{orderNo}}&lt;/h1&gt;&lt;p&gt;收件人：{{name}}&lt;/p&gt;",
+ "data":{"orderNo":"SO-20261113-001","name":"张三"},
+ "printer":"HP LaserJet"}</code></pre>
+  <p>含 HTML 标签时渲染为 <code>.html</code> 走无头浏览器转 PDF，否则渲染为 <code>.txt</code>。</p>
+
+  <h2>浏览器端示例</h2>
+  <pre><code>const ws = new WebSocket('ws://127.0.0.1:19861/ws');
+ws.onopen = () =&gt; ws.send(JSON.stringify({ cmd: 'GetStatus' }));
+ws.onmessage = e =&gt; {
+  const r = JSON.parse(e.data);
+  if (r.operator === 'QueueChanged') console.log('队列变化', r.data.summary);
+  else console.log('响应', r);
+};</code></pre>
+
+  <h2>Active-Online Print（AO 主动在线打印）</h2>
+  <p>本终端可主动向 <strong>AoRelay 中继服务器</strong> 建立出站长连接，由网页 / 中台经中继下发打印任务，实现广域网远程打印。在「设置 → 主动在线打印（AO）」中启用并填写中继地址即可，启用状态变更<strong>立即生效</strong>，无需重启。</p>
+  <pre><code>终端侧（自动）
+  ws://&lt;host&gt;:&lt;port&gt;/device   终端出站长连接：hello 注册（设备名/打印机列表）、30s 心跳、接收 job、回传 result
+
+中继侧（AoRelay）
+  ws://&lt;host&gt;:&lt;port&gt;/client   业务方连接：list 设备、job 下发任务、接收 result
+  GET /api/devices               在线设备列表（JSON）
+  GET /ao.html                   浏览器测试页
+  GET /health                    健康检查</code></pre>
+  <table>
+    <thead><tr><th>配置项</th><th>默认</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>aoEnabled</code></td><td><code>false</code></td><td>启用后本终端主动连接中继，接受远程任务</td></tr>
+      <tr><td><code>aoRelayUrl</code></td><td><code>ws://127.0.0.1:8081</code></td><td>中继地址，支持 <code>ws/wss/http(s)</code>，自动换算 ws</td></tr>
+      <tr><td><code>aoKey</code></td><td><code>""</code></td><td>共享密钥，留空则不校验</td></tr>
+      <tr><td><code>aoDeviceName</code></td><td>机器名</td><td>中继内唯一设备 ID（仅字母/数字/-/_/./@）</td></tr>
+    </tbody>
+  </table>
+  <p>任务经 <code>CommandDispatcher</code> 白名单执行，只有已配置的命令可被远程调用；断线后指数退避自动重连（1s→2s→4s→…→30s 封顶）。</p>
+
+  <div class="warn">
+    <strong>磁盘清理默认安全：</strong> <code>CleanDisk</code> 未显式传 <code>"dryRun": false</code> 时只做试运行不删除；
+    且只能删除应用临时目录与系统 Temp 下、不在白名单里的文件。请先用 <code>ScanDisk</code> 拿到路径再提交。
+  </div>
+
+  <div class="footer">Lychee Printing Assistant / 荔枝打印助手 v2.0 · WebSocket 协议</div>
+</main>
+</div>
+</body>
+</html>

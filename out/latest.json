@@ -1,1 +1,16 @@
-{"version":"1.01.010","url":"https://gitee.com/alaikiscom/pipprinter/releases/download/v1.01.010/PipPrinter-win-x64-1.01.010.zip","setupUrl":"https://gitee.com/alaikiscom/pipprinter/releases/download/v1.01.010/PipPrinter-Setup-v1.01.010.exe","sha256":"0009eaec51a3d2149c4b8afa8a0b9f40d32f7be36f6b04d7653d2d45bb28dafa","size":93364419,"notes":"PipPrinter 1.01.010 (win-x64 portable + setup) — 打印队列增强：幂等键去重（防重复出纸/重复计费）+ 批次/波次按序 + 排期计划任务到点自动打印 + 召回撤回审计 + 智能错峰推荐；6 条新命令（SchedulePrint/ListSchedulePlans/RemoveSchedulePlan/PrintBatch/RecallJob/RecommendPlan）","publishedAt":"2026-11-20T00:33:00Z"}
+{
+  "version": "1.01.010",
+  "latest": "https://gitee.com/alaikis/pipprinter/releases/attach/1.01.010.zip",
+  "assets": [
+    {
+      "name": "PipPrinter-win-x64-1.01.010.zip",
+      "size": 97580395,
+      "sha256": "db8369cede3b03b560a5d6a90d916a9031643c887c07d349b59d6d9b357ef8aa"
+    },
+    {
+      "name": "PipPrinter-Setup-v1.01.010.exe",
+      "size": 100359586,
+      "sha256": "67add05390301a96b69fa6ab3584d9bdd60cdd01aedfd6779108f63e4fd37438"
+    }
+  ]
+}

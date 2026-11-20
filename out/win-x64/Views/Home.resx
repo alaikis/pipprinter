@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <!--
+    UI 全部改为代码构建（Views/Home.cs + Views/Pages/*.cs）。
+    原先的 notifyIcon1.Icon 强类型资源引用 System.Drawing.Common v5，
+    在 .NET 10 上反序列化会失败，因此移除；托盘图标改为运行时从
+    Resource/bitbug_favicon.ico 加载，失败时回退到 SystemIcons.Application。
+  -->
+</root>
