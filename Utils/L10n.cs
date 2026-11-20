@@ -119,6 +119,28 @@ namespace DuoAssistant.Utils
             ["确认清空全部队列任务？正在打印的任务会保留。"] =
                 "Clear all queue jobs? Jobs currently printing will be kept.",
 
+            // ---- 排期 / 批次 / 召回 / 推荐（v1.01.010）----
+            ["排期"] = "Schedule",
+            ["计划任务"] = "Scheduled plan",
+            ["批次"] = "Batch",
+            ["波次"] = "Wave",
+            ["批量打印"] = "Batch print",
+            ["召回"] = "Recall",
+            ["撤回"] = "Withdraw",
+            ["推荐排期"] = "Recommend schedule",
+            ["幂等命中"] = "Idempotent hit",
+            ["到点自动打印"] = "Auto-print when due",
+            ["计划任务已排，到点自动入队打印"] = "Plan scheduled; it will be queued automatically when due",
+            ["计划任务已撤回"] = "Scheduled plan withdrawn",
+            ["计划任务已提前触发"] = "Scheduled plan triggered early",
+            ["批量任务已入队"] = "Batch jobs enqueued",
+            ["任务已召回撤下"] = "Job recalled and removed from queue",
+            ["出纸后不可撤销，需按审计回执追溯"] = "Irreversible once printed; trace via audit receipt",
+            ["无历史数据，已按默认策略推荐均匀分布时段"] = "No history; recommended even distribution by default",
+            ["已按近 14 天打印低峰推荐错峰时段"] = "Recommended off-peak slots from the last 14 days of print history",
+            ["计划任务列表"] = "Scheduled plans",
+            ["暂无计划任务"] = "No scheduled plans",
+
             // ---- 打印机页 ----
             ["打印机名称"] = "Printer name",
             ["驱动"] = "Driver",

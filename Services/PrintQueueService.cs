@@ -258,7 +258,9 @@ namespace DuoAssistant.Services
             {
                 try
                 {
-                    await _signal.WaitAsync(_cts.Token).ConfigureAwait(false);
+                    // 带 1s 超时轮询：即使队列里只有「未到点的计划任务」（无新信号唤醒），
+                    // 也能到点释放并打印。超时返回 false 属正常，直接进入下面的到点检查。
+                    await _signal.WaitAsync(TimeSpan.FromSeconds(1), _cts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { break; }
 

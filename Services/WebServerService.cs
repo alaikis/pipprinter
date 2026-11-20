@@ -282,6 +282,48 @@ namespace DuoAssistant.Services
                 return Json(CommandDispatcher.Execute("ArchivePrintEvents", body));
             });
 
+            // ---------------------------------------------------------------- 排期 / 批次 / 召回 / 推荐
+            // GET 列出计划 / POST 排计划 / DELETE 撤回计划（body 可带 now=true 提前触发）
+            app.MapGet("/api/schedule", () => Json(CommandDispatcher.Execute("ListSchedulePlans", "{}")));
+            app.MapPost("/api/schedule", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("SchedulePrint", body));
+            });
+            app.MapDelete("/api/schedule", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("RemoveSchedulePlan", body));
+            });
+            // 批量/波次打印：jobs 数组按序入队
+            app.MapPost("/api/batch", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("PrintBatch", body));
+            });
+            // 召回撤回：撤下未开始打印的任务并记审计
+            app.MapPost("/api/recall", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("RecallJob", body));
+            });
+            // 智能推荐排期：基于真实审计流水的低峰时段
+            app.MapPost("/api/recommend", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("RecommendPlan", body));
+            });
+
             app.MapPost("/api/clean/scan", async (HttpContext ctx) =>
             {
                 string body;
