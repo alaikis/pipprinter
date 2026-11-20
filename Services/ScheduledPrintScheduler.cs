@@ -29,7 +29,7 @@ namespace DuoAssistant.Services
         public class Plan
         {
             public string Id { get; set; } = Guid.NewGuid().ToString("N");
-            /// <summary>触发时间（UTC ISO8601）。一次性任务，到点执行后置 Done 不再重复。</summary>
+            /// <summary>触发时间（本地时间 DateTime.Now）。一次性任务，到点执行后置 Done 不再重复。</summary>
             public DateTime DueAt { get; set; }
             /// <summary>任务体：打印 job 字段（target/printer/copies/… 同 QueuePrint）。</summary>
             public PrintJob Job { get; set; } = new PrintJob();
@@ -39,7 +39,7 @@ namespace DuoAssistant.Services
             public string Note { get; set; } = "";
             /// <summary>状态：pending（未触发）/ done（已触发）/ cancelled。</summary>
             public string Status { get; set; } = "pending";
-            /// <summary>实际触发时间（UTC）。</summary>
+            /// <summary>实际触发时间（本地时间）。</summary>
             public DateTime? FiredAt { get; set; }
         }
 
@@ -101,12 +101,12 @@ namespace DuoAssistant.Services
         public Plan Add(Plan plan)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
-            if (plan.DueAt <= DateTime.UtcNow) plan.DueAt = DateTime.UtcNow.AddSeconds(1);
+            if (plan.DueAt <= DateTime.Now) plan.DueAt = DateTime.Now.AddSeconds(1);
             if (string.IsNullOrWhiteSpace(plan.Id)) plan.Id = Guid.NewGuid().ToString("N");
             plan.Status = "pending";
             lock (_gate) _plans.Add(plan);
             Save();
-            Tools.Logger("计划任务入列: " + plan.Id + " 到点 " + plan.DueAt.ToLocalTime());
+            Tools.Logger("计划任务入列: " + plan.Id + " 到点 " + plan.DueAt);
             return ClonePlan(plan);
         }
 
@@ -131,7 +131,7 @@ namespace DuoAssistant.Services
             {
                 var p = _plans.FirstOrDefault(x => x.Id == id);
                 if (p == null || p.Status != "pending") return false;
-                p.DueAt = DateTime.UtcNow;
+                p.DueAt = DateTime.Now;
             }
             Save();
             return true;
@@ -148,7 +148,7 @@ namespace DuoAssistant.Services
             List<Plan> due;
             lock (_gate)
             {
-                var now = DateTime.UtcNow;
+                var now = DateTime.Now;
                 due = _plans.Where(x => x.Status == "pending" && x.DueAt <= now).ToList();
                 foreach (var p in due) p.Status = "firing"; // 先占位，避免并发重复触发
             }
@@ -165,7 +165,7 @@ namespace DuoAssistant.Services
             job.GroupId = string.IsNullOrEmpty(job.GroupId) ? ("plan:" + p.Id) : job.GroupId;
             var queued = PrintQueueService.Instance.Enqueue(job);
             p.Status = "done";
-            p.FiredAt = DateTime.UtcNow;
+            p.FiredAt = DateTime.Now;
             Tools.Logger("计划任务触发: " + p.Id + " → 队列 " + queued.Id +
                          (queued.Deduped ? "（幂等命中，未重复入队）" : ""));
             try { PrintEventStore.Record("plan:" + p.Id, "Scheduler", 0, job.Copies, true,

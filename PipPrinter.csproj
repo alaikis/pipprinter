@@ -21,7 +21,7 @@
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <!-- 版本规范 vMAJOR.FEATURE.PATCH：补丁版递增 PATCH(001→002)，大变更递增 FEATURE(1.01.000)，重大重构递增 MAJOR -->
-    <Version>1.01.009</Version>
+    <Version>1.01.010</Version>
     <AssemblyVersion>1.1.0.9</AssemblyVersion>
     <FileVersion>1.1.0.9</FileVersion>
     <Product>Lychee Printing Assistant</Product>

@@ -49,6 +49,12 @@
       <tr><td><span class="badge">POST</span></td><td><code>/api/print/toxps</code></td><td>便捷入口：打印到 XPS 文件，body 即 <code>PrintToXps</code> 参数</td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/escpos</code></td><td>便捷入口：ESC/POS 热敏小票原始打印，body 即 <code>PrintEscPos</code> 参数</td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/clean/scan</code></td><td>便捷入口：扫描磁盘，body 可空</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/schedule</code></td><td>列出全部计划任务与摘要</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/schedule</code></td><td>排计划任务：<code>dueAt</code> + <code>job</code>（或平铺字段），返回 <code>planId</code></td></tr>
+      <tr><td><span class="badge">DELETE</span></td><td><code>/api/schedule</code></td><td>撤回计划（body <code>planId</code>）；<code>now:true</code> 则提前触发</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/batch</code></td><td>批量/波次打印：<code>jobs</code> 数组按序入队，返回 <code>groupId</code>/<code>jobIds</code></td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/recall</code></td><td>召回撤回：<code>id</code>（jobId）+ <code>reason</code>，记审计</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/recommend</code></td><td>智能推荐错峰时段：基于真实打印审计流水</td></tr>
     </tbody>
   </table>
 
@@ -60,6 +66,35 @@
 # 等价于
 curl http://127.0.0.1:19861/api/printers</code></pre>
   <p>body 必须是 JSON 对象且包含 <code>cmd</code>；不在 <code>allowedCommands</code> 白名单里的命令返回 <code>403</code>。</p>
+
+  <div class="note"><strong>幂等 / 批次 / 排期：</strong><code>QueuePrint</code> 支持 <code>idempotencyKey</code>（同键未完成任务不重复入队，返回 <code>deduped:true</code>，防重复出纸与重复计费）、<code>groupId</code>+<code>groupOrder</code>（同批按序消费）、<code>dueAt</code>（到点才打印）。<code>dueAt</code> 支持 ISO8601 带时区、Unix 秒与本地时间字符串，内部统一按本地时间调度。</div>
+
+  <h2>排期 · 批次 · 召回 · 推荐</h2>
+  <pre><code># 1) 排一个计划任务：到点自动入队打印（本地持久化，重启不丢）
+curl -X POST http://127.0.0.1:19861/api/schedule \
+  -H "Content-Type: application/json" \
+  -d '{"dueAt":"2026-11-20T14:30:00+08:00","target":"C:\\orders\\batch1.pdf","printer":"HP LaserJet","copies":2,"note":"午后波次"}'
+# → {"code":200,"data":{"planId":"...","dueAt":"...","job":{...}}}
+
+# 2) 查看 / 撤回计划（提前触发带 now:true）
+curl http://127.0.0.1:19861/api/schedule
+curl -X DELETE http://127.0.0.1:19861/api/schedule -H "Content-Type: application/json" -d '{"planId":"..."}'
+curl -X DELETE http://127.0.0.1:19861/api/schedule -H "Content-Type: application/json" -d '{"planId":"...","now":true}'
+
+# 3) 批量/波次：整批同组按序入队，复用幂等与断网补打
+curl -X POST http://127.0.0.1:19861/api/batch \
+  -H "Content-Type: application/json" \
+  -d '{"jobs":[{"target":"C:\\o\\1.pdf"},{"target":"C:\\o\\2.pdf"}],"idempotencyKey":"wave-001"}'
+# → {"code":200,"data":{"groupId":"batch:...","count":2,"deduped":0,"jobIds":[...]}}
+
+# 4) 智能推荐错峰时段（基于近 14 天真实审计流水，无历史则默认策略）
+curl -X POST http://127.0.0.1:19861/api/recommend \
+  -H "Content-Type: application/json" -d '{"count":5,"withinHours":8}'
+# → {"code":200,"data":{"basedOn":"history","slots":[{"at":"...","hourLoad":2,"recommended":true},...]}}
+
+# 5) 召回撤回未开始打印的任务（记审计；printing 出纸后不可撤）
+curl -X POST http://127.0.0.1:19861/api/recall \
+  -H "Content-Type: application/json" -d '{"id":"<jobId>","reason":"客户取消"}'</code></pre>
 
   <h2>提交打印任务</h2>
   <pre><code>curl -X POST http://127.0.0.1:19861/api/print \

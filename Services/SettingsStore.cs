@@ -127,7 +127,9 @@ namespace DuoAssistant.Services
                                                           "MatchPrinter", "SetPrinterPreference", "GetPrinterPreferences",
                                                           "ScanLanPrinters", "PrintToIp",
                                                           "ListPrintSlugs", "AddPrinterSlug", "RemovePrinterSlug",
-                                                          "ListPrintEvents", "ArchivePrintEvents" })
+                                                          "ListPrintEvents", "ArchivePrintEvents",
+                                                          "SchedulePrint", "ListSchedulePlans", "RemoveSchedulePlan",
+                                                          "PrintBatch", "RecallJob", "RecommendPlan" })
                                 if (!loaded.AllowedCommands.Exists(x =>
                                         string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
                                     loaded.AllowedCommands.Add(added);
@@ -166,7 +168,9 @@ namespace DuoAssistant.Services
                     "ScanDisk", "CleanDisk", "CleanAppTemp", "GetDiskInfo", "GetSettings", "SaveSettings", "GetStatus",
                     "GetMachineFingerprint", "CheckUpdate", "ApplyUpdate", "ScanLanPrinters", "PrintToIp",
                     "ListPrintSlugs", "AddPrinterSlug", "RemovePrinterSlug",
-                    "ListPrintEvents", "ArchivePrintEvents"
+                    "ListPrintEvents", "ArchivePrintEvents",
+                    "SchedulePrint", "ListSchedulePlans", "RemoveSchedulePlan",
+                    "PrintBatch", "RecallJob", "RecommendPlan"
                 },
                 CleanWhitelist = new List<string>
                 {

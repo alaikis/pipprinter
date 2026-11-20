@@ -61,11 +61,17 @@
       <tr><td><code>PrintToPdf</code></td><td>打印到 PDF 文件（Microsoft Print to PDF 虚拟打印机）</td><td><code>path</code>、<code>output</code>（输出路径，缺省落 <code>temp/</code>）、<code>printer</code> …</td></tr>
       <tr><td><code>PrintToXps</code></td><td>打印到 XPS 文件（图片/文本用内置写入器，其余回退虚拟打印机）</td><td><code>path</code>、<code>output</code>、<code>printer</code> …</td></tr>
       <tr><td><code>PrintEscPos</code></td><td>ESC/POS 热敏小票原始打印（文本/一维码/二维码直发字节流）</td><td><code>printer</code>（本地名或 <code>host:port</code> TCP 9100）、<code>text</code>、<code>encoding</code>（默认 <code>GB2312</code>）、<code>align</code>、<code>bold</code>、<code>barcode</code>/<code>barcodeFormat</code>、<code>qrcode</code>、<code>cashDrawer</code>、<code>feed</code>、<code>cut</code></td></tr>
-      <tr><td><code>QueuePrint</code></td><td>加入打印队列，返回 <code>jobId</code></td><td>同 <code>PrintFile</code></td></tr>
+      <tr><td><code>QueuePrint</code></td><td>加入打印队列，返回 <code>jobId</code></td><td>同 <code>PrintFile</code>；另支持 <code>groupId</code>/<code>groupOrder</code>（批次按序）、<code>dueAt</code>（到点才打印）、<code>idempotencyKey</code>（幂等防重，命中返回 <code>deduped:true</code>）</td></tr>
       <tr><td><code>GetQueue</code></td><td>查询全部任务与队列摘要</td><td>—</td></tr>
       <tr><td><code>RetryJob</code></td><td>失败任务重试并前置</td><td><code>id</code></td></tr>
       <tr><td><code>CancelJob</code></td><td>取消等待中的任务</td><td><code>id</code></td></tr>
       <tr><td><code>ClearQueue</code></td><td>清空队列</td><td><code>finishedOnly</code>（默认 true）</td></tr>
+      <tr><td><code>SchedulePrint</code></td><td>排一个计划任务，到点自动入队打印（持久化，重启不丢）</td><td><code>dueAt</code>（ISO8601 带时区 / Unix 秒 / 本地时间，必填）、<code>job</code>（PrintJob 对象）或平铺字段、<code>idempotencyKey</code>、<code>note</code>。返回 <code>planId</code></td></tr>
+      <tr><td><code>ListSchedulePlans</code></td><td>列出全部计划任务及摘要</td><td>—</td></tr>
+      <tr><td><code>RemoveSchedulePlan</code></td><td>撤回未触发的计划；<code>now:true</code> 则提前触发</td><td><code>planId</code>、<code>now</code>（默认 false）</td></tr>
+      <tr><td><code>PrintBatch</code></td><td>批量/波次打印：整批同组按序入队，复用幂等与断网补打</td><td><code>jobs</code>（PrintJob 数组，必填）、<code>groupId</code>、<code>idempotencyKey</code>（前缀，按序加 <code>:index</code>）、<code>dueAt</code>。返回 <code>groupId</code>/<code>jobIds</code>/<code>deduped</code></td></tr>
+      <tr><td><code>RecallJob</code></td><td>召回撤回未开始打印的任务并记审计；printing 不可撤回</td><td><code>id</code>（jobId）、<code>reason</code></td></tr>
+      <tr><td><code>RecommendPlan</code></td><td>智能推荐错峰时段：基于近 14 天真实打印审计流水，无历史则按默认策略</td><td><code>count</code>（1-200）、<code>printer</code>（可选过滤 host）、<code>withinHours</code>（1-72，默认 8）、<code>startAt</code>。返回 <code>basedOn</code>（history/default）与 <code>slots</code></td></tr>
       <tr><td><code>GetPrinterList</code></td><td>打印机名数组 + 默认 + 详情</td><td>—</td></tr>
       <tr><td><code>GetPrinterDetail</code></td><td>仅返回详情数组</td><td>—</td></tr>
       <tr><td><code>SetDefaultPrinter</code></td><td>切换系统默认打印机</td><td><code>printer</code></td></tr>

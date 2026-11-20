@@ -641,9 +641,9 @@ namespace DuoAssistant.Services
 
         /// <summary>
         /// 排一个计划打印任务：到点自动入队打印（复用队列的幂等去重/批次/断网补打）。
-        /// 参数：dueAt（ISO8601 或 Unix 秒，UTC 优先）、job（PrintJob 字段：target/printer/copies/…）、
+        /// 参数：dueAt（ISO8601 带时区 / Unix 秒 / 本地时间字符串）、job（PrintJob 字段：target/printer/copies/…）、
         ///       idempotencyKey（可选，触发重复也不重打）、note（可选备注）。
-        /// 返回 planId，后续可用 RecallPlan/NowPlan 管理。
+        /// 返回 planId，后续可用 ListSchedulePlans/RemoveSchedulePlan 管理。
         /// </summary>
         public string SchedulePrint(string args)
         {
@@ -653,12 +653,12 @@ namespace DuoAssistant.Services
                 var dt = ParseObject(args);
                 var dueRaw = Str(dt, "dueAt") ?? Str(dt, "due") ?? Str(dt, "at");
                 if (string.IsNullOrWhiteSpace(dueRaw))
-                    return Result.error("缺少 dueAt 字段（ISO8601 或 Unix 秒，UTC 优先）", 400, cmd);
+                    return Result.error("缺少 dueAt 字段（ISO8601 带时区 / Unix 秒 / 本地时间）", 400, cmd);
                 DateTime? due;
                 try { due = ParseDueAt(dueRaw); }
                 catch (Exception ex) { return Result.error("dueAt 格式无法解析: " + ex.Message, 400, cmd); }
-                if (due <= DateTime.UtcNow.AddSeconds(1))
-                    due = DateTime.UtcNow.AddSeconds(1); // 至少 1s 后
+                if (due <= DateTime.Now.AddSeconds(1))
+                    due = DateTime.Now.AddSeconds(1); // 至少 1s 后（本地时间，与调度器一致）
 
                 var job = new PrintJob();
                 if (dt["job"] is JObject jobObj)
@@ -698,9 +698,9 @@ namespace DuoAssistant.Services
         }
 
         /// <summary>列出全部计划任务（含 pending/done/cancelled 状态与下次触发时间）。</summary>
-        public string ListScheduled(string args)
+        public string ListSchedulePlans(string args)
         {
-            const string cmd = "ListScheduled";
+            const string cmd = "ListSchedulePlans";
             try
             {
                 var plans = ScheduledPrintScheduler.Instance.GetAll();
@@ -715,14 +715,23 @@ namespace DuoAssistant.Services
         }
 
         /// <summary>撤回某条尚未触发的计划任务。参数：planId。</summary>
-        public string RecallPlan(string args)
+        public string RemoveSchedulePlan(string args)
         {
-            const string cmd = "RecallPlan";
+            const string cmd = "RemoveSchedulePlan";
             try
             {
-                var planId = Str(ParseObject(args), "planId") ?? Str(ParseObject(args), "id");
+                var dt = ParseObject(args);
+                var planId = Str(dt, "planId") ?? Str(dt, "id");
                 if (string.IsNullOrWhiteSpace(planId))
                     return Result.error("缺少 planId 字段", 400, cmd);
+                // now=true：提前触发（把 DueAt 置为当前，下一轮 tick 立即入队）；否则撤回
+                if (Bool(dt, "now", false))
+                {
+                    var fired = ScheduledPrintScheduler.Instance.Now(planId);
+                    return fired
+                        ? Result.success(data: new { planId, now = true }, cmd: cmd, msg: "计划任务已提前触发")
+                        : Result.error("计划任务不存在或已非 pending", 404, cmd);
+                }
                 var ok = ScheduledPrintScheduler.Instance.Remove(planId);
                 return ok
                     ? Result.success(data: new { planId }, cmd: cmd, msg: "计划任务已撤回")
@@ -731,55 +740,149 @@ namespace DuoAssistant.Services
             catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
         }
 
-        /// <summary>提前触发某条计划任务（不等 dueAt，立即入队）。参数：planId。</summary>
-        public string NowPlan(string args)
+        /// <summary>
+        /// 批量打印（波次）：把一批任务作为同一 group 按序入队，复用队列的批次顺序/幂等/断网补打。
+        /// 参数：jobs（数组，每项为 PrintJob 字段：target/printer/copies/…）、groupId（可选，缺省自动生成）、
+        ///       idempotencyKey（可选前缀，按序加 :index）、dueAt（可选，整批同一到点时间）。
+        /// </summary>
+        public string PrintBatch(string args)
         {
-            const string cmd = "NowPlan";
+            const string cmd = "PrintBatch";
             try
             {
-                var planId = Str(ParseObject(args), "planId") ?? Str(ParseObject(args), "id");
-                if (string.IsNullOrWhiteSpace(planId))
-                    return Result.error("缺少 planId 字段", 400, cmd);
-                var ok = ScheduledPrintScheduler.Instance.Now(planId);
-                return ok
-                    ? Result.success(data: new { planId }, cmd: cmd, msg: "计划任务已提前触发")
-                    : Result.error("计划任务不存在或已非 pending", 404, cmd);
+                var dt = ParseObject(args);
+                var arr = dt["jobs"] as JArray;
+                if (arr == null || arr.Count == 0)
+                    return Result.error("缺少 jobs 数组（至少 1 个打印任务）", 400, cmd);
+                var groupId = Str(dt, "groupId") ?? ("batch:" + Guid.NewGuid().ToString("N"));
+                var keyPrefix = Str(dt, "idempotencyKey") ?? "";
+                DateTime? due = null;
+                if (!string.IsNullOrWhiteSpace(Str(dt, "dueAt")))
+                {
+                    try { due = ParseDueAt(Str(dt, "dueAt")); }
+                    catch (Exception ex) { return Result.error("dueAt 格式无法解析: " + ex.Message, 400, cmd); }
+                }
+
+                var jobIds = new List<string>();
+                int deduped = 0, skipped = 0, order = 0;
+                foreach (var token in arr)
+                {
+                    if (!(token is JObject jo)) { skipped++; continue; }
+                    PrintJob job;
+                    try { job = BuildJob(jo, ResolveTarget(jo)); }
+                    catch { skipped++; continue; } // 缺 target 等无效项跳过，不阻断整批
+                    job.GroupId = groupId;
+                    job.GroupOrder = order;
+                    if (!string.IsNullOrEmpty(keyPrefix)) job.IdempotencyKey = keyPrefix + ":" + order;
+                    job.DueAt = due; // 整批同一到点（null=立即）
+                    var queued = PrintQueueService.Instance.Enqueue(job);
+                    jobIds.Add(queued.Id);
+                    if (queued.Deduped) deduped++;
+                    order++;
+                }
+                if (jobIds.Count == 0)
+                    return Result.error("jobs 中没有有效打印任务（每项需含 target/path/label/url/file）", 400, cmd);
+
+                try { PrintEventStore.Record("batch:" + groupId, "Batch", 0, jobIds.Count, true,
+                    "批量入队 " + jobIds.Count + " 项，幂等命中 " + deduped + " 项，跳过无效 " + skipped + " 项"); }
+                catch { /* 审计失败不影响入队 */ }
+
+                return Result.success(data: new
+                {
+                    groupId,
+                    count = jobIds.Count,
+                    deduped,
+                    skipped,
+                    dueAt = due,
+                    jobIds
+                }, cmd: cmd, msg: "批量任务已入队 " + jobIds.Count + " 项" +
+                    (deduped > 0 ? "（幂等命中 " + deduped + " 项未重复入队）" : ""));
             }
             catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
         }
 
-        /// <summary>把 dueAt（ISO8601 / Unix 秒 / 本地日期时间）解析为本地 DateTime。</summary>
+        /// <summary>
+        /// 智能推荐排期：基于本机近 14 天真实打印审计流水，按「一天中的小时」统计负载，
+        /// 为一批任务推荐低峰错峰时段；无历史数据时退回默认均匀分布策略并标注 basedOn。
+        /// 参数：count（任务数 1-200，默认 1）、printer（可选，仅统计某 host）、
+        ///       withinHours（未来多少小时内，默认 8）、startAt（可选起始时间，默认当前）。
+        /// </summary>
+        public string RecommendPlan(string args)
+        {
+            const string cmd = "RecommendPlan";
+            try
+            {
+                var dt = ParseObject(args);
+                int count = Math.Max(1, Math.Min(200, Int(dt, "count", 1)));
+                int withinHours = Math.Max(1, Math.Min(72, Int(dt, "withinHours", 8)));
+                var host = Str(dt, "printer") ?? "";
+                var start = string.IsNullOrWhiteSpace(Str(dt, "startAt")) ? DateTime.Now : ParseDueAt(Str(dt, "startAt"));
+                if (start < DateTime.Now) start = DateTime.Now;
+
+                var fromTs = DateTimeOffset.UtcNow.AddDays(-14).ToUnixTimeSeconds();
+                var history = PrintEventStore.Query(host, fromTs, 0, true, 1000);
+                var hourLoad = new int[24];
+                foreach (var e in history)
+                {
+                    var hour = DateTimeOffset.FromUnixTimeSeconds(e.Ts).ToLocalTime().Hour;
+                    hourLoad[hour] += Math.Max(1, e.Copies);
+                }
+                bool hasHistory = history.Count > 0;
+
+                var candidates = new List<(DateTime At, int Load)>();
+                for (int i = 0; i < withinHours; i++)
+                {
+                    var t = start.AddHours(i + 1);
+                    t = new DateTime(t.Year, t.Month, t.Day, t.Hour, 0, 0, DateTimeKind.Local);
+                    candidates.Add((t, hourLoad[t.Hour]));
+                }
+                var picked = new HashSet<DateTime>(candidates.OrderBy(x => x.Load).Take(count).Select(x => x.At));
+                var slots = candidates.Select(x => new
+                {
+                    at = x.At,
+                    hourLoad = x.Load,
+                    recommended = picked.Contains(x.At)
+                }).ToList();
+
+                return Result.success(data: new
+                {
+                    basedOn = hasHistory ? "history" : "default",
+                    historyDays = hasHistory ? 14 : 0,
+                    sampleCount = history.Count,
+                    recommendedCount = Math.Min(count, candidates.Count),
+                    slots
+                }, cmd: cmd, msg: hasHistory
+                    ? "已按近 14 天打印低峰推荐错峰时段"
+                    : "无历史数据，已按默认策略推荐均匀分布时段");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, 500, cmd); }
+        }
+
+        /// <summary>
+        /// 把 dueAt（ISO8601 / Unix 秒 / 本地日期时间）统一解析为「本地时间」DateTime。
+        /// 关键：本项目所有队列/调度时间字段（EnqueuedAt/DueAt/FiredAt）都用 DateTime.Now 本地时区，
+        /// 因此这里必须在任何分支都返回本地时间，不能混返 UTC，否则调度器比较会差 8 小时。
+        /// </summary>
         private static DateTime ParseDueAt(string raw)
         {
             raw = raw.Trim();
-            if (raw.All(c => c == '.' || char.IsDigit(c)) && raw.Length >= 9 && raw.Length <= 13)
+            // Unix 秒 / 毫秒（含小数秒）→ UTC → 本地
+            if (raw.Length >= 9 && raw.Length <= 16 && raw.All(c => char.IsDigit(c) || c == '.'))
             {
-                // Unix 秒 / 毫秒
-                var ts = long.Parse(raw);
-                return ts < 10_000_000_000L
+                var ts = long.Parse(raw.Split('.')[0]);
+                var utc = ts < 10_000_000_000L
                     ? DateTimeOffset.FromUnixTimeSeconds(ts).UtcDateTime
                     : DateTimeOffset.FromUnixTimeMilliseconds(ts).UtcDateTime;
+                return utc.ToLocalTime();
             }
-            // ISO8601 优先（带 Z / +00:00 视为 UTC；无时区视为本地）
-            if (raw.EndsWith("Z", StringComparison.Ordinal))
-                return DateTime.Parse(raw, System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal)
-                    .ToLocalTime();
-            if (raw.Contains("+") || raw.Contains("offset") || raw.Contains("-"))
-            {
-                if (DateTimeOffset.TryParse(raw, out var dto))
-                {
-                    var dt = dto.DateTime;
-                    return dto.Offset == TimeSpan.Zero ? dt.ToLocalTime() : dt;
-                }
-            }
-            if (DateTime.TryParseExact(raw, "yyyy-MM-ddTHH:mm:ss",
-                System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var exact))
-                return exact;
+            // 带明确时区（Z / ±HH:mm）的 ISO8601 → 转本地；无时区则按本机时区解释
+            if (DateTimeOffset.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var dto))
+                return dto.UtcDateTime.ToLocalTime();
+            // 兜底：本地日期时间字符串
             if (DateTime.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var parsed))
-                return parsed;
+                    System.Globalization.DateTimeStyles.None, out var parsed))
+                return DateTime.SpecifyKind(parsed, DateTimeKind.Local);
             throw new FormatException("无法解析 dueAt: " + raw);
         }
 
