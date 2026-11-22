@@ -116,7 +116,7 @@ namespace DuoAssistant.Services
                 if (resolved.Channel == "Net")
                 {
                     try { PrintEventStore.Record(resolved.Printer, outcome.Engine, 0, job.Copies,
-                        outcome.Ok, outcome.Ok ? outcome.Message : (outcome.Detail ?? outcome.Message)); }
+                        outcome.Ok, outcome.Ok ? outcome.Message : (outcome.Detail ?? outcome.Message), outcome.Pages); }
                     catch { /* 审计失败不影响主流程 */ }
                 }
                 if (!outcome.Ok)
@@ -980,8 +980,13 @@ namespace DuoAssistant.Services
 
                 var outcome = new NetPrinterService().PrintSmart(ip, bytes, copies);
                 // 打印审计：无论成败都记一条本机直发流水（host/engine/bytes/copies/ok/detail），供对账排障
-                try { PrintEventStore.Record(ip, outcome.Engine, bytes.Length, copies, outcome.Ok,
-                    outcome.Ok ? outcome.Message : (outcome.Detail ?? outcome.Message)); } catch { /* 审计失败不影响主流程 */ }
+                try
+                {
+                    var pdfPages = PageCountService.Billable(job.ResolvedLocalPath, job.Pages, copies);
+                    PrintEventStore.Record(ip, outcome.Engine, bytes.Length, copies, outcome.Ok,
+                        outcome.Ok ? outcome.Message : (outcome.Detail ?? outcome.Message), pdfPages);
+                }
+                catch { /* 审计失败不影响主流程 */ }
 
                 if (!outcome.Ok)
                     return Result.error(outcome.Message, 502, cmd,
@@ -1777,6 +1782,79 @@ namespace DuoAssistant.Services
                     data: new { file, jobId = enqueued.Id, status = enqueued.Status, deduped = enqueued.Deduped });
             }
             catch (Exception ex) { return Result.error(ex.Message, cmd: "PrintInboxFile"); }
+        }
+
+        /// <summary>通知：查询最近的通知发送历史。</summary>
+        public string ListNotifications(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var limit = Math.Max(1, Math.Min(200, Int(dt, "limit", 50)));
+                return Result.success(cmd: "ListNotifications", data: NotificationService.History(limit));
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "ListNotifications"); }
+        }
+
+        /// <summary>通知：发送一条测试通知，用于验证渠道配置是否生效。</summary>
+        public string TestNotification(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                NotificationService.Notify(NotifyKind.System, "测试通知",
+                    Str(dt, "message") ?? "这是一条来自荔枝打印助手的测试通知");
+                return Result.success(cmd: "TestNotification", data: new { queued = true });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "TestNotification"); }
+        }
+
+        /// <summary>身份：LDAP/AD 绑定认证或本机身份兜底，返回 userId 供配额/策略/审计使用。</summary>
+        public string AuthenticateUser(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var user = Str(dt, "user") ?? Str(dt, "username") ?? "";
+                var password = Str(dt, "password") ?? "";
+                var id = LdapAuthService.Authenticate(user, password);
+                if (!id.Ok) return Result.error(id.Message, 401, "AuthenticateUser",
+                    data: new { provider = id.Provider });
+                return Result.success(cmd: "AuthenticateUser", data: new
+                {
+                    userId = id.UserId, displayName = id.DisplayName,
+                    provider = id.Provider, groups = id.Groups, message = id.Message
+                });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "AuthenticateUser"); }
+        }
+
+        /// <summary>身份：列出当前启用的身份提供者。</summary>
+        public string ListIdentityProviders(string args)
+        {
+            try { return Result.success(cmd: "ListIdentityProviders", data: LdapAuthService.Providers()); }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "ListIdentityProviders"); }
+        }
+
+        /// <summary>集中同步：手动触发一次增量上报。</summary>
+        public string SyncCentral(string args)
+        {
+            try { return Result.success(cmd: "SyncCentral", data: new { message = CentralSyncService.Sync() }); }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "SyncCentral"); }
+        }
+
+        /// <summary>集中同步：查看本机同步状态与中心聚合统计。</summary>
+        public string GetCentralStatus(string args)
+        {
+            try { return Result.success(cmd: "GetCentralStatus", data: CentralSyncService.Status()); }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "GetCentralStatus"); }
+        }
+
+        /// <summary>集中同步：列出已上报的中心节点（本程序作中心时）。</summary>
+        public string ListCentralClients(string args)
+        {
+            try { return Result.success(cmd: "ListCentralClients", data: CentralSyncService.Clients()); }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "ListCentralClients"); }
         }
 
         // ------------------------------------------------------------ 辅助

@@ -67,6 +67,10 @@ namespace DuoAssistant.Models
         [Newtonsoft.Json.JsonIgnore]
         public bool Deduped { get; set; }
 
+        /// <summary>瞬态：本次解析出的本地文件路径（URL 已下载），供计费页数精确统计。不持久化。</summary>
+        [Newtonsoft.Json.JsonIgnore]
+        public string ResolvedLocalPath { get; set; } = "";
+
         // ---------------------------------------------------------------- 打印管理（v1.01.011+）
         /// <summary>安全打印：true=任务挂起等待 PIN/工卡认证释放，不自动出纸。</summary>
         public bool ReleaseRequired { get; set; }

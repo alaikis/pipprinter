@@ -20,6 +20,10 @@ namespace DuoAssistant.Services
         public string Message { get; set; } = "";
         public string Detail { get; set; } = "";
         public string Engine { get; set; } = "";
+        /// <summary>本次实际计费页数（页数范围 × 份数）；0 表示引擎无法判定，记账时回退估算。</summary>
+        public int Pages { get; set; }
+        /// <summary>页数据来源：exact=精确解析，estimate=估算，unknown=无法判定。</summary>
+        public string PagesSource { get; set; } = "";
     }
 
     /// <summary>支持的文件类型分组。</summary>
@@ -80,8 +84,35 @@ namespace DuoAssistant.Services
 
         /// <summary>
         /// 执行打印。URL 会先下载到 temp 目录；文件类型由扩展名或 Content-Type 推断。
+        /// 返回前统一回填实际页数（供审计、配额、计费使用）。
         /// </summary>
         public PrintOutcome Print(PrintJob job)
+        {
+            var outcome = PrintCore(job);
+            if (job != null && outcome != null && outcome.Ok && outcome.Pages <= 0)
+            {
+                var local = job.ResolvedLocalPath;
+                if (!string.IsNullOrWhiteSpace(local) && File.Exists(local))
+                {
+                    try
+                    {
+                        var info = PageCountService.Count(local);
+                        if (info.Pages > 0)
+                        {
+                            outcome.Pages = PageCountService.SelectedCount(job.Pages, info.Pages)
+                                            * Math.Max(1, job.Copies);
+                            outcome.PagesSource = info.Exact ? "exact" : "estimate";
+                        }
+                        else outcome.PagesSource = "unknown";
+                    }
+                    catch (Exception ex) { Tools.Logger("页数回填失败: " + ex.Message); outcome.PagesSource = "error"; }
+                }
+                else outcome.PagesSource = "no-local-file";
+            }
+            return outcome;
+        }
+
+        private PrintOutcome PrintCore(PrintJob job)
         {
             if (job == null) return new PrintOutcome { Ok = false, Message = "任务为空" };
             try
@@ -334,12 +365,15 @@ namespace DuoAssistant.Services
                 var path = Path.Combine(SettingsStore.Instance.TempDir,
                     Guid.NewGuid().ToString("N") + "_" + SanitizeFileName(name));
                 File.WriteAllBytes(path, bytes);
+                job.ResolvedLocalPath = path;
                 return path;
             }
 
             if (!File.Exists(job.Target))
                 throw new FileNotFoundException("文件不存在: " + job.Target);
-            return Path.GetFullPath(job.Target);
+            var localPath = Path.GetFullPath(job.Target);
+            job.ResolvedLocalPath = localPath;
+            return localPath;
         }
 
         private static bool IsHttp(string s) =>

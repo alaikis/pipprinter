@@ -64,6 +64,19 @@ namespace DuoAssistant.Services
 
             try
             {
+                var cfg = SettingsStore.Instance.Current;
+                var host = (cfg.WebHost ?? "").Trim().ToLowerInvariant();
+                bool loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
+                bool authRequired = !string.IsNullOrWhiteSpace(cfg.ApiToken) ||
+                                    (!loopback && cfg.RequireTokenOnLan);
+                if (authRequired && string.IsNullOrWhiteSpace(cfg.ApiToken))
+                {
+                    IsRunning = false;
+                    LastError = "非本机监听必须先在 config/appsettings.json 设置 apiToken";
+                    Tools.Logger("Web 服务拒绝启动: " + LastError);
+                    return;
+                }
+
                 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
                 {
                     ApplicationName = "PipPrinter.Docs",
@@ -90,6 +103,39 @@ namespace DuoAssistant.Services
                 fsOptions.DefaultFilesOptions.DefaultFileNames.Clear();
                 fsOptions.DefaultFilesOptions.DefaultFileNames.Add("index.html");
                 app.UseFileServer(fsOptions);
+
+                // API 鉴权：/health 与静态文档始终放行；其余 /api/*、/ws、/webprint 在配置
+                // apiToken（或非本机监听）后要求 X-Api-Token / Authorization: Bearer / ?token=。
+                if (authRequired)
+                {
+                    var expected = cfg.ApiToken;
+                    app.Use(async (ctx, next) =>
+                    {
+                        var path = ctx.Request.Path.Value ?? "";
+                        if (string.Equals(path, "/health", StringComparison.OrdinalIgnoreCase) ||
+                            path.StartsWith("/api/docs", StringComparison.OrdinalIgnoreCase))
+                        {
+                            await next(); return;
+                        }
+                        var supplied = ctx.Request.Headers["X-Api-Token"].ToString();
+                        if (string.IsNullOrEmpty(supplied))
+                        {
+                            var auth = ctx.Request.Headers["Authorization"].ToString();
+                            if (auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                                supplied = auth.Substring(7).Trim();
+                        }
+                        if (string.IsNullOrEmpty(supplied)) supplied = ctx.Request.Query["token"].ToString();
+                        if (!string.Equals(supplied, expected, StringComparison.Ordinal))
+                        {
+                            ctx.Response.StatusCode = 401;
+                            ctx.Response.ContentType = "application/json; charset=utf-8";
+                            await ctx.Response.WriteAsync("{\"code\":401,\"error\":\"invalid or missing api token\"}");
+                            return;
+                        }
+                        await next();
+                    });
+                    Tools.Logger("API 鉴权已启用: X-Api-Token / Authorization Bearer / ?token=");
+                }
 
                 MapApi(app, docs);
                 _app = app;
@@ -416,6 +462,43 @@ namespace DuoAssistant.Services
                 using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
                 if (string.IsNullOrWhiteSpace(body)) body = "{}";
                 return Json(CommandDispatcher.Execute("PrintInboxFile", body));
+            });
+
+            // 通知告警：历史查询 + 测试投递
+            app.MapGet("/api/notifications", () => Json(CommandDispatcher.Execute("ListNotifications", "{}")));
+            app.MapPost("/api/notifications/test", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("TestNotification", body));
+            });
+
+            // 集中式多机后台：节点上报 / 中心查询
+            app.MapPost("/api/central/ingest", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                try
+                {
+                    var payload = Newtonsoft.Json.JsonConvert.DeserializeObject<CentralPayload>(body);
+                    CentralSyncService.Ingest(payload);
+                    return Results.Json(new { code = 200, ok = true });
+                }
+                catch (Exception ex) { return Results.Json(new { code = 400, error = ex.Message }); }
+            });
+            app.MapGet("/api/central/status", () => Json(CommandDispatcher.Execute("GetCentralStatus", "{}")));
+            app.MapGet("/api/central/clients", () => Json(CommandDispatcher.Execute("ListCentralClients", "{}")));
+            app.MapPost("/api/central/sync", () => Json(CommandDispatcher.Execute("SyncCentral", "{}")));
+
+            // 身份：LDAP/AD 认证 + 提供者列表
+            app.MapGet("/api/auth/providers", () => Json(CommandDispatcher.Execute("ListIdentityProviders", "{}")));
+            app.MapPost("/api/auth/login", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("AuthenticateUser", body));
             });
 
             // ---- 移动打印：Web Print 上传页 + 简化 IPP 端点 ----

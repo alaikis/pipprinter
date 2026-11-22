@@ -86,10 +86,14 @@ makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrin
 ├── Services/
 │   ├── SettingsStore.cs             # appsettings.json 读写单例（含目录约定）
 │   ├── CommandDispatcher.cs         # 唯一命令分派入口 + 白名单
-│   ├── PrintServices.cs             # 63 个对外命令实现（含安全打印/配额/策略/报表/存档/驱动/墨量/预览/扫描接入）
+│   ├── PrintServices.cs             # 70 个对外命令实现（含页数贯通/鉴权/通知/AD 身份/集中同步 + 安全打印/配额/策略/报表/存档/驱动/墨量/预览/扫描接入）
 │   ├── PrintQueueService.cs         # 顺序队列、持久化、崩溃恢复、幂等去重、批次按序、计划到点释放
 │   ├── ScheduledPrintScheduler.cs   # 计划任务：本地 5s 轮询 + scheduled.json 持久化 + 崩溃恢复
-│   ├── PrintEventStore.cs           # 打印审计：本地 SQLite 流水，按 host/时间/成败检索与归档
+│   ├── PrintEventStore.cs           # 打印审计：本地 SQLite 流水（含真实 pages 列），检索与归档
+│   ├── PageCountService.cs          # 统一页数解析（PDF 精确 + 页码范围 + 份数），配额/计费/报表同源
+│   ├── NotificationService.cs       # 通知告警：Webhook / 钉钉 / 企微 / SMTP，30 分钟去重
+│   ├── LdapAuthService.cs           # 身份：LDAP/AD 绑定认证 + Windows 本机身份兜底
+│   ├── CentralSyncService.cs        # 集中式多机后台：增量上报 + 中心聚合（可配置，默认纯本机）
 │   ├── ManagementStore.cs           # 配额 / 费用 / 策略 / 报表聚合（SQLite，与审计共用库）
 │   ├── SecureReleaseService.cs      # 安全打印：PIN PBKDF2 哈希、挂起队列、认证释放
 │   ├── PolicyEvaluator.cs           # 打印策略引擎：入队前按用户/打印机/时段覆写或拒绝
@@ -174,7 +178,7 @@ makensis -DVERSION=1.00.002 -DPUBLISH_DIR=..\\release\\publish installer/PipPrin
       <tr><td><code>tempAutoCleanMaxAgeDays</code></td><td><code>7</code></td><td>启动时自动删除应用 <code>temp/</code> 下超过该天数的文件；<code>0</code> = 关闭。仅作用于应用自产临时文件，不碰系统 Temp</td></tr>
       <tr><td><code>useRecycleBin</code></td><td><code>true</code></td><td>删除时移入回收站</td></tr>
       <tr><td><code>cleanWhitelist</code></td><td>系统目录 / 桌面 / 文档 / 下载 / AppData</td><td>保护目录，支持环境变量</td></tr>
-      <tr><td><code>allowedCommands</code></td><td>63 项</td><td>命令白名单（WS / REST / UI 共用）；新增命令必须同时加入 <code>SettingsStore.Defaults()</code> 与升级兼容数组，否则网络调用返回 403</td></tr>
+      <tr><td><code>allowedCommands</code></td><td>70 项</td><td>命令白名单（WS / REST / UI 共用）；新增命令必须同时加入 <code>SettingsStore.Defaults()</code> 与升级兼容数组，否则网络调用返回 403</td></tr>
     </tbody>
   </table>
 

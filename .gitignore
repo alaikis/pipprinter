@@ -22,5 +22,11 @@ pdfreader/SumatraPDF-settings.txt
 # SignPath: 本地签名私钥（绝不入库）
 installer/*.pfx
 
+# headless 跨平台子项目：源码入库，构建产物不入库
+headless/out/
+headless/bin/
+headless/obj/
+headless/data/
+
 # EmDash CMS（独立 Cloudflare 部署，非 OSS 主仓库）
 /emdash/

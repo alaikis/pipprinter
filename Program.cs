@@ -80,6 +80,14 @@ namespace DuoAssistant
             // 墨量 SNMP 定时轮询（间隔来自配置 TonerPollMinutes；0=关闭）
             StartTonerPolling();
 
+            // 通知告警服务（Webhook / 钉钉 / 企微 / SMTP，配置驱动，未启用时零开销）
+            try { DuoAssistant.Services.NotificationService.Start(); }
+            catch (Exception ex) { Utils.Tools.Logger("通知服务启动失败: " + ex.Message); }
+
+            // 集中式多机后台（配置 CentralApiUrl 才联网上报，否则纯本机）
+            try { DuoAssistant.Services.CentralSyncService.Start(); }
+            catch (Exception ex) { Utils.Tools.Logger("集中同步启动失败: " + ex.Message); }
+
             _web = new WebServerService();
             // Main 为 STAThread 且尚未进入消息循环，同步等待启动是安全的
             _web.StartAsync().GetAwaiter().GetResult();
@@ -130,6 +138,8 @@ namespace DuoAssistant
             {
                 AutoUpdateService.Instance.Stop();
                 StopTonerPolling();
+                DuoAssistant.Services.NotificationService.Stop();
+                DuoAssistant.Services.CentralSyncService.Stop();
                 DuoAssistant.Services.ScheduledPrintScheduler.Instance.Stop();
                 _web?.StopAsync().GetAwaiter().GetResult();
                 _ws?.Stop();
@@ -150,6 +160,8 @@ namespace DuoAssistant
             {
                 DuoAssistant.Services.InboxWatcherService.Start();
                 StartTonerPolling();
+                DuoAssistant.Services.NotificationService.Start();
+                DuoAssistant.Services.CentralSyncService.Start();
                 _web = new WebServerService();
                 _web.StartAsync().GetAwaiter().GetResult();
                 _ws = new WebsockServerService(_web);

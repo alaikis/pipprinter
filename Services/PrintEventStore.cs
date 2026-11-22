@@ -25,6 +25,8 @@ namespace DuoAssistant.Services
         /// <summary>发送字节数（本机驱动管线可能为 0）。</summary>
         public int Bytes { get; set; }
         public int Copies { get; set; } = 1;
+        /// <summary>实际计费页数（份数 × 选中页数）。旧库迁移后为 0。</summary>
+        public int Pages { get; set; }
         public bool Ok { get; set; }
         /// <summary>结果说明 / 失败原因。</summary>
         public string Detail { get; set; } = "";
@@ -45,7 +47,7 @@ namespace DuoAssistant.Services
         private static string ConnStr() => "Data Source=" + DbPath;
 
         /// <summary>记录一条打印事件（调用方应在打印主流程完成后调用；失败静默，不影响打印）。</summary>
-        public static long Record(string host, string engine, int bytes, int copies, bool ok, string detail)
+        public static long Record(string host, string engine, int bytes, int copies, bool ok, string detail, int pages = 0)
         {
             try
             {
@@ -55,13 +57,14 @@ namespace DuoAssistant.Services
                 using (var c = Open())
                 {
                     var cmd = c.CreateCommand();
-                    cmd.CommandText = "INSERT INTO print_events(ts, host, engine, bytes, copies, ok, detail, machine)" +
-                                      " VALUES($ts,$host,$engine,$bytes,$copies,$ok,$detail,$machine)";
+                    cmd.CommandText = "INSERT INTO print_events(ts, host, engine, bytes, copies, pages, ok, detail, machine)" +
+                                      " VALUES($ts,$host,$engine,$bytes,$copies,$pages,$ok,$detail,$machine)";
                     cmd.Parameters.AddWithValue("$ts", ts);
                     cmd.Parameters.AddWithValue("$host", host ?? "");
                     cmd.Parameters.AddWithValue("$engine", engine ?? "");
                     cmd.Parameters.AddWithValue("$bytes", bytes);
                     cmd.Parameters.AddWithValue("$copies", copies);
+                    cmd.Parameters.AddWithValue("$pages", pages);
                     cmd.Parameters.AddWithValue("$ok", ok ? 1 : 0);
                     cmd.Parameters.AddWithValue("$detail", detail ?? "");
                     cmd.Parameters.AddWithValue("$machine", machine);
@@ -86,7 +89,7 @@ namespace DuoAssistant.Services
                 lock (Gate)
                 using (var c = Open())
                 {
-                    var sb = new System.Text.StringBuilder("SELECT id,ts,host,engine,bytes,copies,ok,detail,machine FROM print_events WHERE 1=1");
+                    var sb = new System.Text.StringBuilder("SELECT id,ts,host,engine,bytes,copies,pages,ok,detail,machine FROM print_events WHERE 1=1");
                     var cmd = c.CreateCommand();
                     if (!string.IsNullOrWhiteSpace(host))
                     {
@@ -109,9 +112,10 @@ namespace DuoAssistant.Services
                                 Engine = r.GetString(3) ?? "",
                                 Bytes = r.GetInt32(4),
                                 Copies = r.GetInt32(5),
-                                Ok = r.GetInt64(6) == 1,
-                                Detail = r.GetString(7) ?? "",
-                                Machine = r.GetString(8) ?? ""
+                                Pages = r.GetInt32(6),
+                                Ok = r.GetInt64(7) == 1,
+                                Detail = r.GetString(8) ?? "",
+                                Machine = r.GetString(9) ?? ""
                             });
                 }
             }
@@ -172,6 +176,16 @@ namespace DuoAssistant.Services
                 "  ok INTEGER NOT NULL DEFAULT 1," +
                 "  detail TEXT NOT NULL DEFAULT ''," +
                 "  machine TEXT NOT NULL DEFAULT '')");
+            // 旧库迁移：v1.01.011 之前的表没有 pages 列，补列而非丢历史
+            using (var info = c.CreateCommand())
+            {
+                info.CommandText = "PRAGMA table_info(print_events)";
+                bool hasPages = false;
+                using (var ir = info.ExecuteReader())
+                    while (ir.Read())
+                        if (string.Equals(ir.GetString(1), "pages", StringComparison.OrdinalIgnoreCase)) hasPages = true;
+                if (!hasPages) Exec(c, "ALTER TABLE print_events ADD COLUMN pages INTEGER NOT NULL DEFAULT 0");
+            }
             Exec(c, "CREATE INDEX IF NOT EXISTS idx_events_ts ON print_events(ts)");
             Exec(c, "CREATE INDEX IF NOT EXISTS idx_events_host ON print_events(host)");
             // WAL 更适合「高频写 + 偶发读」的日志型表

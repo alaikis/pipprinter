@@ -151,6 +151,7 @@ namespace DuoAssistant
             };
             AddTab(L10n.T("打印"), new PrintTab());
             AddTab(L10n.T("打印队列"), new QueueTab());
+            AddTab(L10n.T("打印管理"), new ManageTab());
             AddTab(L10n.T("打印机"), new PrintersTab());
             AddTab(L10n.T("磁盘清理"), new DiskTab());
             AddTab(L10n.T("设置"), new SettingsTab());

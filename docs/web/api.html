@@ -72,6 +72,14 @@
       <tr><td><span class="badge ok">GET</span></td><td><code>/api/inbox</code></td><td>扫描收件箱文件列表（data/inbox）</td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/inbox/print</code></td><td>把扫描收件箱文件入队打印（body <code>name</code>）</td></tr>
       <tr><td><span class="badge ok">GET</span></td><td><code>/webprint</code></td><td>手机浏览器网页打印上传页（移动打印）</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/notifications</code></td><td>通知发送历史（<code>?limit=</code>）</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/notifications/test</code></td><td>发送一条测试通知，验证渠道配置</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/auth/providers</code></td><td>列出身份提供者（ldap / local）</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/auth/login</code></td><td>身份认证：<code>user</code> + <code>password</code>，返回 userId/组</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/central/ingest</code></td><td>中心：接收节点上报（审计/费用/墨量）</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/central/status</code></td><td>中心：跨机聚合统计</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/central/clients</code></td><td>中心：已上报节点列表</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/central/sync</code></td><td>节点：手动触发一次增量上报</td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/webprint</code></td><td>网页打印上传提交（multipart/form-data）</td></tr>
     </tbody>
   </table>

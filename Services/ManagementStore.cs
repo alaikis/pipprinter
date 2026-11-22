@@ -341,7 +341,7 @@ namespace DuoAssistant.Services
                 {
                     var cmd = c.CreateCommand();
                     cmd.CommandText = "SELECT " + expr + " AS k, COUNT(*) AS jobs, SUM(bytes) AS bytes," +
-                                      " SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS oks," +
+                                      " SUM(CASE WHEN ok=1 THEN pages ELSE 0 END) AS pages," +
                                       " SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS fails" +
                                       " FROM print_events WHERE 1=1";
                     if (fromTs > 0) { cmd.CommandText += " AND ts>=$f"; cmd.Parameters.AddWithValue("$f", fromTs); }
@@ -354,7 +354,7 @@ namespace DuoAssistant.Services
                             Key = r.IsDBNull(0) ? "-" : r.GetString(0),
                             Jobs = r.GetInt32(1),
                             Bytes = r.IsDBNull(2) ? 0 : r.GetInt64(2),
-                            Pages = r.GetInt32(3), // 成功数近似页数（print_events 无 pages 列）
+                            Pages = r.IsDBNull(3) ? 0 : r.GetInt32(3), // v1.01.012 起为审计流水的真实页数（旧库为 0）
                             Failed = r.GetInt32(4)
                         });
                 }

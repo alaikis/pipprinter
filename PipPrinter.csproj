@@ -21,7 +21,7 @@
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <!-- 版本规范 vMAJOR.FEATURE.PATCH：补丁版递增 PATCH(001→002)，大变更递增 FEATURE(1.01.000)，重大重构递增 MAJOR -->
-    <Version>1.01.011</Version>
+    <Version>1.01.012</Version>
     <AssemblyVersion>1.1.0.9</AssemblyVersion>
     <FileVersion>1.1.0.9</FileVersion>
     <Product>Lychee Printing Assistant</Product>
@@ -37,7 +37,7 @@
       AoRelay 是解决方案中的独立项目（子目录），其 obj/bin 与源码不应被本项目的
       **/*.cs、**/* 默认 glob 误收，否则会把 AoRelay 的 AssemblyInfo 编进主程序集。
     -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);AoRelay/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);AoRelay/**;headless/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <!-- Kestrel / ASP.NET Core minimal API 用于内嵌 Web 文档服务，版本随 .NET 10 共享框架 -->
@@ -63,6 +63,8 @@
     <PackageReference Include="Svg" Version="3.4.7" />
     <!-- 本机指纹：Win32_Volume 取卷序列号（WMI） -->
     <PackageReference Include="System.Management" Version="10.0.0" />
+    <!-- LDAP/AD 身份集成（System.DirectoryServices.Protocols，官方跨平台 LDAP 库） -->
+    <PackageReference Include="System.DirectoryServices.Protocols" Version="10.0.0" />
     <PackageReference Include="ZXing.Net" Version="0.16.10" />
     <!--
       移除 Microsoft.Extensions.Logging.Log4Net.AspNetCore：

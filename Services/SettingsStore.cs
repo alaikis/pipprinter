@@ -68,6 +68,39 @@ namespace DuoAssistant.Services
         public int TonerPollMinutes { get; set; } = 60;
         // 扫描收件目录监听：开启后自动打印 data/inbox 中的新文件
         public bool InboxWatcherEnabled { get; set; } = false;
+        // ---- API 鉴权：留空=本机访问免鉴权（保持历史兼容）；设置后调用方需带 token ----
+        // 支持请求头 X-Api-Token 或 Authorization: Bearer <token>。/health 与静态文档始终放行。
+        public string ApiToken { get; set; } = "";
+        // 非本机监听（WebHost=0.0.0.0 或具体网卡 IP）时是否强制要求 ApiToken；默认开启，防止局域网裸奔。
+        public bool RequireTokenOnLan { get; set; } = true;
+        // ---- 通知告警 ----
+        public bool NotificationsEnabled { get; set; } = false;
+        public string NotifyWebhookUrl { get; set; } = "";
+        public string DingTalkWebhook { get; set; } = "";
+        public string WeComWebhook { get; set; } = "";
+        public string NotifyMailTo { get; set; } = "";
+        public string SmtpHost { get; set; } = "";
+        public int SmtpPort { get; set; } = 25;
+        public bool SmtpSsl { get; set; } = false;
+        public string SmtpUser { get; set; } = "";
+        public string SmtpPassword { get; set; } = "";
+        public string SmtpFrom { get; set; } = "";
+        // ---- 身份集成（LDAP/AD）----
+        // LDAP 服务器地址；留空则用 Windows 本机登录身份兜底
+        public string LdapServer { get; set; } = "";
+        public int LdapPort { get; set; } = 389;
+        public string LdapBaseDn { get; set; } = "";
+        public string LdapUserAttribute { get; set; } = "sAMAccountName";
+        // 用户名后缀（如 @corp.com），用户名未含 \ 或 @ 时自动追加
+        public string LdapUserSuffix { get; set; } = "";
+        public bool LdapUseSsl { get; set; } = false;
+        // 是否允许调用方覆盖 userId（默认 false：绑定认证身份，杜绝伪造）
+        public bool AllowUserIdOverride { get; set; } = false;
+        // ---- 集中式多机后台 ----
+        // 中心 API 根地址（如 http://192.168.1.10:19861）；留空=纯本机不联网
+        public string CentralApiUrl { get; set; } = "";
+        public string CentralApiToken { get; set; } = "";
+        public int CentralSyncMinutes { get; set; } = 30;
     }
 
     /// <summary>
@@ -144,7 +177,10 @@ namespace DuoAssistant.Services
                                                           "GetCostReport", "GetPrintReport", "ListPolicies", "SetPolicy",
                                                           "RemovePolicy", "GetArchive", "CleanArchive",
                                                           "ListDriverPackages", "InstallPrinterDriver", "GetTonerLevels",
-                                                          "PreviewJob", "ListInboxFiles", "PrintInboxFile" })
+                                                          "PreviewJob", "ListInboxFiles", "PrintInboxFile",
+                                                          "ListNotifications", "TestNotification",
+                                                          "AuthenticateUser", "ListIdentityProviders",
+                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients" })
                                 if (!loaded.AllowedCommands.Exists(x =>
                                         string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
                                     loaded.AllowedCommands.Add(added);
@@ -189,7 +225,9 @@ namespace DuoAssistant.Services
                     "ListHeldJobs", "ReleaseJob", "GetQuota", "SetQuota", "GetCostReport", "GetPrintReport",
                     "ListPolicies", "SetPolicy", "RemovePolicy", "GetArchive", "CleanArchive",
                     "ListDriverPackages", "InstallPrinterDriver", "GetTonerLevels", "PreviewJob",
-                    "ListInboxFiles", "PrintInboxFile"
+                    "ListInboxFiles", "PrintInboxFile", "ListNotifications", "TestNotification",
+                    "AuthenticateUser", "ListIdentityProviders",
+                    "SyncCentral", "GetCentralStatus", "ListCentralClients"
                 },
                 CleanWhitelist = new List<string>
                 {

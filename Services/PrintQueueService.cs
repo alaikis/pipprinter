@@ -82,11 +82,17 @@ namespace DuoAssistant.Services
                     job.Error = decision.Reason;
                     return job.Clone();
                 }
-                var quotaErr = ManagementStore.CheckQuota(job.UserId, Math.Max(1, job.Copies), job.Color == true);
+                // 页数未知(0)时放行；已知页数才做配额预检，避免 URL/内联内容被误拒
+                var estimate = PageCountService.EstimateForCheck(job);
+                var quotaErr = estimate > 0
+                    ? ManagementStore.CheckQuota(job.UserId, estimate, job.Color == true)
+                    : null;
                 if (!string.IsNullOrEmpty(quotaErr))
                 {
                     Tools.Logger("配额拒绝入队: " + quotaErr);
                     job.Error = quotaErr;
+                    NotificationService.Notify(NotifyKind.QuotaExceeded, "打印配额超限",
+                        "用户 " + (string.IsNullOrWhiteSpace(job.UserId) ? "默认" : job.UserId) + "：" + quotaErr);
                     return job.Clone();
                 }
                 ArchiveService.ArchiveJob(job);
@@ -371,20 +377,32 @@ namespace DuoAssistant.Services
                         next.FinishedAt = DateTime.Now;
                         next.Error = outcome.Ok ? "" : outcome.Message;
                     }
-                    // 计费与费用流水（仅成功任务；页数按份数计，彩色/黑白单价来自配置）
+                    // 计费与费用流水：优先用引擎返回的实际页数；引擎无法判定时回退本地文件解析，
+                    // 仍无法判定(0)则按份数兜底并标注，绝不再无条件拿份数当页数。
                     if (outcome.Ok)
                     {
                         try
                         {
                             var st = SettingsStore.Instance.Current;
-                            var pages = Math.Max(1, next.Copies);
+                            var pages = outcome.Pages;
+                            if (pages <= 0 && !string.IsNullOrWhiteSpace(next.ResolvedLocalPath))
+                                pages = PageCountService.Billable(next.ResolvedLocalPath, next.Pages, next.Copies);
+                            if (pages <= 0) pages = Math.Max(1, next.Copies);
                             var isColor = next.Color == true;
                             var unit = isColor ? st.CostPerPageColor : st.CostPerPageBW;
                             var amount = (decimal)unit * pages;
                             next.BillablePages = pages;
                             ManagementStore.Charge(next.UserId, next.Printer, next.Id, pages, isColor, amount);
+                            PrintEventStore.Record(next.Printer, outcome.Engine, 0, next.Copies, true,
+                                "页数来源:" + (outcome.PagesSource ?? "fallback"), pages);
                         }
                         catch (Exception ex) { Tools.Logger("任务计费失败(不影响打印): " + ex.Message); }
+                    }
+                    else
+                    {
+                        PrintEventStore.Record(next.Printer, outcome.Engine, 0, next.Copies, false, outcome.Message, 0);
+                        NotificationService.Notify(NotifyKind.JobFailed, "打印任务失败",
+                            "任务 " + next.Id + " → " + next.Printer + "：" + outcome.Message);
                     }
                     Tools.Logger(string.Format("任务 {0} {1}: {2}",
                         next.Id, next.Status, outcome.Message));

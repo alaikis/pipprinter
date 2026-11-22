@@ -42,6 +42,10 @@ namespace DuoAssistant.Services
             {
                 var levels = SnmpToner(host, "public", 1500);
                 lock (Cache) Cache[host] = levels;
+                // 低墨告警：同内容 30 分钟内由 NotificationService 去重
+                foreach (var lv in levels.Where(x => x.Low))
+                    NotificationService.Notify(NotifyKind.TonerLow, "墨量不足",
+                        host + " · " + lv.Cartridge + " 剩余 " + lv.LevelPercent + "%");
                 return levels;
             }
             catch (Exception ex)
