@@ -56,6 +56,7 @@ namespace DuoAssistant.Services
                 {
                     total = _jobs.Count,
                     pending = _jobs.Count(x => x.Status == JobStatus.Pending),
+                    held = _jobs.Count(x => x.Status == JobStatus.Held),
                     printing = _jobs.Count(x => x.Status == JobStatus.Printing),
                     done = _jobs.Count(x => x.Status == JobStatus.Done),
                     failed = _jobs.Count(x => x.Status == JobStatus.Failed),
@@ -70,6 +71,30 @@ namespace DuoAssistant.Services
             if (job.Copies < 1) job.Copies = 1;
             job.Id = Guid.NewGuid().ToString("N");
             job.EnqueuedAt = DateTime.Now;
+
+            // 打印管理钩子：策略评估 → 配额检查 → 存档。失败静默不影响主流程之外的可用性。
+            try
+            {
+                var decision = PolicyEvaluator.Apply(job);
+                if (!decision.Allowed)
+                {
+                    Tools.Logger("策略拒绝入队: " + decision.Reason);
+                    job.Error = decision.Reason;
+                    return job.Clone();
+                }
+                var quotaErr = ManagementStore.CheckQuota(job.UserId, Math.Max(1, job.Copies), job.Color == true);
+                if (!string.IsNullOrEmpty(quotaErr))
+                {
+                    Tools.Logger("配额拒绝入队: " + quotaErr);
+                    job.Error = quotaErr;
+                    return job.Clone();
+                }
+                ArchiveService.ArchiveJob(job);
+            }
+            catch (Exception ex) { Tools.Logger("入队前置钩子失败(放行): " + ex.Message); }
+
+            // 安全打印：releaseRequired 的任务挂起为 held，等待 PIN/工卡认证释放，绝不自动出纸
+            var held = job.ReleaseRequired;
 
             // 计划任务：到点才真正进队列。未到时先暂存（持久化，重启不丢），
             // 工作线程稍后轮询到点释放；已到期（或 DueAt 为空）立即入队并唤醒工作线程。
@@ -88,7 +113,8 @@ namespace DuoAssistant.Services
                     x.Id == job.Id ||
                     (!string.IsNullOrEmpty(dedupKey) &&
                      x.IdempotencyKey == dedupKey &&
-                     (x.Status == JobStatus.Pending || x.Status == JobStatus.Printing)));
+                     (x.Status == JobStatus.Pending || x.Status == JobStatus.Printing ||
+                      x.Status == JobStatus.Held)));
                 if (dup != null)
                 {
                     // 幂等命中：沿用已有任务；若已有任务尚未开始且本次给了更早的触发时间，更新 DueAt
@@ -101,7 +127,8 @@ namespace DuoAssistant.Services
                 }
                 else
                 {
-                    job.Status = JobStatus.Pending;
+                    // 安全打印任务挂起为 held；其余按计划时间决定 pending / 暂存
+                    job.Status = held ? JobStatus.Held : JobStatus.Pending;
                     job.StartedAt = null;
                     job.FinishedAt = null;
                     job.Error = "";
@@ -112,14 +139,20 @@ namespace DuoAssistant.Services
             {
                 Tools.Logger("幂等去重: " + dedupKey + " 已存在，跳过重复入队 → " + job.Id);
                 PersistAndNotify();
-                if (immediate && job.DueAt != null)
+                if (immediate && job.DueAt != null && job.Status != JobStatus.Held)
                 {
                     // 命中但已到期：补发信号让它参与消费（原来暂存任务没被唤醒）
                     _signal.Release();
                 }
                 return job.Clone();
             }
-            if (immediate)
+            if (held)
+            {
+                // 安全打印：不入待打印队列，等待认证释放
+                PersistAndNotify();
+                Tools.Logger("安全打印任务挂起等待认证: " + job.Id + " → " + job.Target);
+            }
+            else if (immediate)
             {
                 PersistAndNotify();
                 _signal.Release();
@@ -161,6 +194,9 @@ namespace DuoAssistant.Services
             {
                 var job = _jobs.FirstOrDefault(x => x.Id == id);
                 if (job == null) return false;
+                // 存档重放：原文件已被删除时从 data/archive/{jobId}/ 恢复
+                if (job.Source != "url" && !string.IsNullOrWhiteSpace(job.Target) && !File.Exists(job.Target))
+                    ArchiveService.RestoreForReplay(job);
                 // 重试任务前置，保证下次消费优先处理
                 _jobs.Remove(job);
                 job.Status = JobStatus.Pending;
@@ -237,6 +273,34 @@ namespace DuoAssistant.Services
                     (x.Status == JobStatus.Pending || x.Status == JobStatus.Printing))?.Clone();
         }
 
+        /// <summary>安全打印：认证通过后把 held 任务释放为 pending 并唤醒工作线程。</summary>
+        public bool ReleaseHeld(string id, string releasedBy)
+        {
+            bool ok = false;
+            lock (_gate)
+            {
+                var job = _jobs.FirstOrDefault(x => x.Id == id);
+                if (job != null && job.Status == JobStatus.Held)
+                {
+                    job.Status = JobStatus.Pending;
+                    job.ReleasedBy = releasedBy ?? "";
+                    job.ReleasedAt = DateTime.Now;
+                    job.PinHash = ""; // 释放后清除 PIN 哈希
+                    ok = true;
+                }
+            }
+            if (ok) { PersistAndNotify(); _signal.Release(); }
+            return ok;
+        }
+
+        /// <summary>安全打印：列出所有等待认证的任务。</summary>
+        public List<PrintJob> HeldJobs()
+        {
+            lock (_gate)
+                return _jobs.Where(x => x.Status == JobStatus.Held)
+                            .OrderBy(x => x.EnqueuedAt).Select(x => x.Clone()).ToList();
+        }
+
         /// <summary>clearFinished=true 只清已完成/失败/取消；false 清空全部（printing 保留）。</summary>
         public int Clear(bool clearFinished)
         {
@@ -306,6 +370,21 @@ namespace DuoAssistant.Services
                         next.Status = outcome.Ok ? JobStatus.Done : JobStatus.Failed;
                         next.FinishedAt = DateTime.Now;
                         next.Error = outcome.Ok ? "" : outcome.Message;
+                    }
+                    // 计费与费用流水（仅成功任务；页数按份数计，彩色/黑白单价来自配置）
+                    if (outcome.Ok)
+                    {
+                        try
+                        {
+                            var st = SettingsStore.Instance.Current;
+                            var pages = Math.Max(1, next.Copies);
+                            var isColor = next.Color == true;
+                            var unit = isColor ? st.CostPerPageColor : st.CostPerPageBW;
+                            var amount = (decimal)unit * pages;
+                            next.BillablePages = pages;
+                            ManagementStore.Charge(next.UserId, next.Printer, next.Id, pages, isColor, amount);
+                        }
+                        catch (Exception ex) { Tools.Logger("任务计费失败(不影响打印): " + ex.Message); }
                     }
                     Tools.Logger(string.Format("任务 {0} {1}: {2}",
                         next.Id, next.Status, outcome.Message));

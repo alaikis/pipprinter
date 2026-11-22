@@ -20,12 +20,18 @@ namespace DuoAssistant
         private static WebServerService _web;
         private static Home _home;
         private static readonly AoClientService _ao = AoClientService.Instance;
+        private static System.Threading.Timer _tonerTimer;
 
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             // 多语言：在任何 UI/消息框之前解析语言（auto 时检测系统 UI 语言，未匹配回退英文）
             Utils.L10n.Init();
+
+            // --headless：跨平台服务模式，只启动 REST/WS + 队列 + 调度器，不创建 WinForms。
+            // 供 Linux/macOS 以纯打印服务部署（打印执行走平台适配：Windows GDI / Unix lpr）。
+            var headless = Array.Exists(args, a => string.Equals(a, "--headless", StringComparison.OrdinalIgnoreCase));
+            if (headless) { RunHeadless(); return; }
 
             // 单实例：避免 WS/Web 端口被第二个进程抢占
             _singleInstance = new Mutex(true, @"Global\PipPrinter_2_0", out bool created);
@@ -66,6 +72,13 @@ namespace DuoAssistant
                 try { new BaseServices().StartWhenSystemStart(); }
                 catch (Exception ex) { Utils.Tools.Logger("开机自启设置失败: " + ex.Message); }
             }
+
+            // 扫描收件目录监听（多品牌 MFD 扫描到共享文件夹 → 自动入队）
+            try { DuoAssistant.Services.InboxWatcherService.Start(); }
+            catch (Exception ex) { Utils.Tools.Logger("扫描收件监听启动失败: " + ex.Message); }
+
+            // 墨量 SNMP 定时轮询（间隔来自配置 TonerPollMinutes；0=关闭）
+            StartTonerPolling();
 
             _web = new WebServerService();
             // Main 为 STAThread 且尚未进入消息循环，同步等待启动是安全的
@@ -116,13 +129,72 @@ namespace DuoAssistant
             finally
             {
                 AutoUpdateService.Instance.Stop();
+                StopTonerPolling();
                 DuoAssistant.Services.ScheduledPrintScheduler.Instance.Stop();
                 _web?.StopAsync().GetAwaiter().GetResult();
                 _ws?.Stop();
                 _ao.Stop();
+                DuoAssistant.Services.InboxWatcherService.Stop();
                 PrintQueueService.Instance.Shutdown();
                 _singleInstance?.ReleaseMutex();
             }
+        }
+
+        /// <summary>
+        /// 跨平台 headless 服务模式：不引用 WinForms UI（仅用托盘无关的后台服务），
+        /// 启动 REST/WS + 队列 + 调度 + 扫描收件监听，主线程阻塞等待退出信号。
+        /// </summary>
+        static void RunHeadless()
+        {
+            try
+            {
+                DuoAssistant.Services.InboxWatcherService.Start();
+                StartTonerPolling();
+                _web = new WebServerService();
+                _web.StartAsync().GetAwaiter().GetResult();
+                _ws = new WebsockServerService(_web);
+                _ws.Start();
+                _ao.Start();
+                DuoAssistant.Services.ScheduledPrintScheduler.Instance.Start();
+                Utils.Tools.Logger("Headless 服务模式已启动: " + _web.Endpoint);
+                Console.WriteLine("Litchio headless service running at " + _web.Endpoint);
+                // 阻塞等待 Ctrl+C / SIGTERM
+                using var exit = new ManualResetEvent(false);
+                Console.CancelKeyPress += (s, e) => { e.Cancel = true; exit.Set(); };
+                exit.WaitOne();
+            }
+            finally
+            {
+                StopTonerPolling();
+                DuoAssistant.Services.ScheduledPrintScheduler.Instance.Stop();
+                _web?.StopAsync().GetAwaiter().GetResult();
+                _ws?.Stop();
+                _ao.Stop();
+                DuoAssistant.Services.InboxWatcherService.Stop();
+                PrintQueueService.Instance.Shutdown();
+            }
+        }
+
+        private static void StartTonerPolling()
+        {
+            try
+            {
+                var minutes = SettingsStore.Instance.Current.TonerPollMinutes;
+                if (minutes <= 0) return;
+                _tonerTimer = new System.Threading.Timer(_ =>
+                {
+                    try { DuoAssistant.Services.TonerMonitorService.PollAll(); }
+                    catch (Exception ex) { Utils.Tools.Logger("墨量轮询失败: " + ex.Message); }
+                }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(minutes));
+                Utils.Tools.Logger("墨量 SNMP 轮询已启动，间隔 " + minutes + " 分钟");
+            }
+            catch (Exception ex) { Utils.Tools.Logger("墨量轮询启动失败: " + ex.Message); }
+        }
+
+        private static void StopTonerPolling()
+        {
+            try { _tonerTimer?.Dispose(); } catch { /* ignore */ }
+            _tonerTimer = null;
         }
 
         /// <summary>供托盘菜单「打开文档站点」使用。</summary>

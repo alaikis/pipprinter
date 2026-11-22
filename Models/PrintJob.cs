@@ -11,6 +11,8 @@ namespace DuoAssistant.Models
     public static class JobStatus
     {
         public const string Pending = "pending";
+        /// <summary>安全打印：等待认证释放（挂起，不出纸）。</summary>
+        public const string Held = "held";
         public const string Printing = "printing";
         public const string Done = "done";
         public const string Failed = "failed";
@@ -64,6 +66,29 @@ namespace DuoAssistant.Models
         /// <summary>瞬态：本次 Enqueue 因幂等键命中而未真正新增（调用方拿到的是已存在任务）。</summary>
         [Newtonsoft.Json.JsonIgnore]
         public bool Deduped { get; set; }
+
+        // ---------------------------------------------------------------- 打印管理（v1.01.011+）
+        /// <summary>安全打印：true=任务挂起等待 PIN/工卡认证释放，不自动出纸。</summary>
+        public bool ReleaseRequired { get; set; }
+        /// <summary>安全打印：认证释放所用 PIN 的 PBKDF2 哈希（salt$hash），不存明文。</summary>
+        public string PinHash { get; set; } = "";
+        /// <summary>安全打印：释放人标识（PIN/工卡/用户名）。</summary>
+        public string ReleasedBy { get; set; } = "";
+        public DateTime? ReleasedAt { get; set; }
+        /// <summary>任务归属用户（配额/费用核算维度）。空=本机默认用户。</summary>
+        public string UserId { get; set; } = "";
+        /// <summary>水印文字（打印前叠加到每页）。</summary>
+        public string Watermark { get; set; } = "";
+        /// <summary>打印偏移微调（毫米，正值为右下）。</summary>
+        public double OffsetX { get; set; }
+        public double OffsetY { get; set; }
+        /// <summary>费用核算：本任务计费用页数（打印成功后写入）。</summary>
+        public int BillablePages { get; set; }
+        /// <summary>策略引擎：被策略覆写的参数说明（审计用）。</summary>
+        public string PolicyApplied { get; set; } = "";
+        /// <summary>存档：原始文件在 data/archive/{jobId}/ 下的相对路径。</summary>
+        public string ArchivePath { get; set; } = "";
+
         public DateTime EnqueuedAt { get; set; } = DateTime.Now;
         public DateTime? StartedAt { get; set; }
         public DateTime? FinishedAt { get; set; }

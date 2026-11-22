@@ -1537,6 +1537,248 @@ namespace DuoAssistant.Services
                 : Result.error(info.Error ?? "更新失败", 500, "ApplyUpdate", data: info);
         }
 
+        // ------------------------------------------------ 打印管理（v1.01.011+）
+
+        /// <summary>安全打印：列出等待 PIN/工卡认证释放的任务。</summary>
+        public string ListHeldJobs(string args)
+        {
+            try
+            {
+                var jobs = SecureReleaseService.HeldJobs();
+                return Result.success(data: new { held = jobs.Count, jobs }, cmd: "ListHeldJobs");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "ListHeldJobs"); }
+        }
+
+        /// <summary>安全打印：认证释放一个挂起任务。参数 jobId、pin、releasedBy。</summary>
+        public string ReleaseJob(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var jobId = Str(dt, "jobId") ?? Str(dt, "id");
+                if (string.IsNullOrWhiteSpace(jobId)) return Result.error("缺少 jobId", cmd: "ReleaseJob");
+                var (ok, msg) = SecureReleaseService.Release(jobId, Str(dt, "pin"), Str(dt, "releasedBy"));
+                return ok ? Result.success(cmd: "ReleaseJob", data: new { jobId }, msg: msg)
+                          : Result.error(msg, 409, "ReleaseJob");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "ReleaseJob"); }
+        }
+
+        /// <summary>配额：查询指定用户本月配额与用量。userId 空=default。</summary>
+        public string GetQuota(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var q = ManagementStore.GetQuota(Str(dt, "userId") ?? "");
+                return Result.success(cmd: "GetQuota", data: q);
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "GetQuota"); }
+        }
+
+        /// <summary>配额：设置用户月度总页数与彩色页数上限（0=不限）。</summary>
+        public string SetQuota(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var uid = Str(dt, "userId") ?? "";
+                var ok = ManagementStore.SetQuota(uid,
+                    Math.Max(0, Int(dt, "monthlyLimit", 0)),
+                    Math.Max(0, Int(dt, "colorLimit", 0)));
+                return ok ? Result.success(cmd: "SetQuota", data: ManagementStore.GetQuota(uid))
+                          : Result.error("配额设置失败", 500, "SetQuota");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "SetQuota"); }
+        }
+
+        /// <summary>费用：查询费用流水。参数 userId/fromTs/toTs/limit。</summary>
+        public string GetCostReport(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var rows = ManagementStore.QueryCosts(Str(dt, "userId") ?? "",
+                    Lng(dt, "fromTs", 0), Lng(dt, "toTs", 0), Int(dt, "limit", 200));
+                return Result.success(cmd: "GetCostReport", data: new { count = rows.Count, rows });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "GetCostReport"); }
+        }
+
+        /// <summary>报表：按维度聚合统计。参数 fromTs/toTs/groupBy(printer|user|hour|color|engine)。</summary>
+        public string GetPrintReport(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var rows = ManagementStore.QueryReport(Lng(dt, "fromTs", 0),
+                    Lng(dt, "toTs", 0), Str(dt, "groupBy") ?? "printer");
+                return Result.success(cmd: "GetPrintReport", data: new { groupBy = Str(dt, "groupBy") ?? "printer", rows });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "GetPrintReport"); }
+        }
+
+        /// <summary>策略：列出全部打印策略。</summary>
+        public string ListPolicies(string args)
+        {
+            try { return Result.success(cmd: "ListPolicies", data: ManagementStore.ListPolicies()); }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "ListPolicies"); }
+        }
+
+        /// <summary>策略：新增或更新策略（带 id 为更新）。</summary>
+        public string SetPolicy(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var p = new PolicyRow
+                {
+                    Id = Lng(dt, "id", 0),
+                    Name = Str(dt, "name") ?? "未命名策略",
+                    UserId = Str(dt, "userId") ?? "",
+                    Printer = Str(dt, "printer") ?? "",
+                    StartHour = Math.Max(0, Math.Min(23, Int(dt, "startHour", 0))),
+                    EndHour = Math.Max(0, Math.Min(24, Int(dt, "endHour", 24))),
+                    ForceDuplex = Bool(dt, "forceDuplex", false),
+                    ForceBW = Bool(dt, "forceBW", false),
+                    DenyColor = Bool(dt, "denyColor", false),
+                    MaxCopies = Math.Max(0, Int(dt, "maxCopies", 0)),
+                    Enabled = Bool(dt, "enabled", true)
+                };
+                return ManagementStore.SavePolicy(p)
+                    ? Result.success(cmd: "SetPolicy", data: p)
+                    : Result.error("策略保存失败", 500, "SetPolicy");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "SetPolicy"); }
+        }
+
+        /// <summary>策略：删除策略。参数 id。</summary>
+        public string RemovePolicy(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                return ManagementStore.DeletePolicy(Lng(dt, "id", 0))
+                    ? Result.success(cmd: "RemovePolicy")
+                    : Result.error("策略不存在或删除失败", 404, "RemovePolicy");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "RemovePolicy"); }
+        }
+
+        /// <summary>存档：查询任务的存档信息。</summary>
+        public string GetArchive(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var jobId = Str(dt, "jobId") ?? Str(dt, "id");
+                var has = ArchiveService.HasArchive(jobId ?? "");
+                return Result.success(cmd: "GetArchive", data: new
+                {
+                    jobId, hasArchive = has,
+                    dir = has ? ArchiveService.ArchiveDir(jobId) : ""
+                });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "GetArchive"); }
+        }
+
+        /// <summary>存档：清理超过 keepDays 天的存档目录。</summary>
+        public string CleanArchive(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var removed = ArchiveService.Clean(Int(dt, "keepDays", 90));
+                return Result.success(cmd: "CleanArchive", data: new { removed }, msg: "已清理 " + removed + " 个存档目录");
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "CleanArchive"); }
+        }
+
+        /// <summary>驱动：列出 lib/driver 下的本地 INF 驱动包（不联网抓取）。</summary>
+        public string ListDriverPackages(string args)
+        {
+            try
+            {
+                var dir = SettingsStore.Instance.DriverDir;
+                var infs = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.inf", SearchOption.AllDirectories) : new string[0];
+                return Result.success(cmd: "ListDriverPackages", data: new
+                {
+                    count = infs.Length,
+                    packages = infs.Select(p => new { path = p, name = Path.GetFileName(p), size = new FileInfo(p).Length }).ToList()
+                });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "ListDriverPackages"); }
+        }
+
+        /// <summary>驱动：从本地 INF 静默安装打印机驱动（pnputil + Add-PrinterDriver）。</summary>
+        public string InstallPrinterDriver(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var inf = Str(dt, "infPath") ?? "";
+                var driverName = Str(dt, "driverName") ?? "";
+                var result = DriverDeploymentService.Install(inf, driverName);
+                return result.Ok
+                    ? Result.success(cmd: "InstallPrinterDriver", data: result, msg: result.Message)
+                    : Result.error(result.Message, 500, "InstallPrinterDriver", data: result);
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "InstallPrinterDriver"); }
+        }
+
+        /// <summary>墨量：查询打印机碳粉/墨量（SNMP，需打印机支持）。</summary>
+        public string GetTonerLevels(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var host = Str(dt, "host") ?? "";
+                var levels = TonerMonitorService.Query(host);
+                return Result.success(cmd: "GetTonerLevels", data: new { levels });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "GetTonerLevels"); }
+        }
+
+        /// <summary>预览：渲染文档指定页为 PNG（base64 缩略图），用于打印前预览。</summary>
+        public string PreviewJob(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var target = ResolveTarget(dt);
+                if (string.IsNullOrWhiteSpace(target)) return Result.error("缺少 target", cmd: "PreviewJob");
+                var maxPages = Math.Max(1, Math.Min(10, Int(dt, "maxPages", 3)));
+                var previews = PreviewService.Render(target, maxPages);
+                return Result.success(cmd: "PreviewJob", data: new { target, count = previews.Count, pages = previews });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "PreviewJob"); }
+        }
+
+        /// <summary>扫描接入：列出 data/inbox 中待处理文件。</summary>
+        public string ListInboxFiles(string args)
+        {
+            try { return Result.success(cmd: "ListInboxFiles", data: InboxWatcherService.ListFiles()); }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "ListInboxFiles"); }
+        }
+
+        /// <summary>扫描接入：把 data/inbox 中的指定文件入队打印。</summary>
+        public string PrintInboxFile(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                var name = Str(dt, "name") ?? "";
+                var file = InboxWatcherService.ResolveFile(name);
+                if (file == null) return Result.error("扫描文件不存在: " + name, 404, "PrintInboxFile");
+                var job = BuildJob(dt, file);
+                var enqueued = PrintQueueService.Instance.Enqueue(job);
+                return Result.success(cmd: "PrintInboxFile",
+                    data: new { file, jobId = enqueued.Id, status = enqueued.Status, deduped = enqueued.Deduped });
+            }
+            catch (Exception ex) { return Result.error(ex.Message, cmd: "PrintInboxFile"); }
+        }
+
         // ------------------------------------------------------------ 辅助
 
         private static JObject ParseObject(string args)
@@ -1563,6 +1805,18 @@ namespace DuoAssistant.Services
         {
             var v = o?[key];
             return v == null || v.Type == JTokenType.Null ? fallback : v.Value<bool>();
+        }
+
+        private static double Dbl(JObject o, string key, double fallback)
+        {
+            var v = o?[key];
+            return v == null || v.Type == JTokenType.Null ? fallback : v.Value<double>();
+        }
+
+        private static long Lng(JObject o, string key, long fallback)
+        {
+            var v = o?[key];
+            return v == null || v.Type == JTokenType.Null ? fallback : v.Value<long>();
         }
 
         /// <summary>
@@ -1618,7 +1872,14 @@ namespace DuoAssistant.Services
                 Bin = Str(dt, "bin") ?? "",
                 Dpi = Math.Max(0, Int(dt, "dpi", 0)),
                 PageOrder = pageOrderReq ? (Str(dt, "pageOrder") ?? Str(dt, "parity") ?? "")
-                    : (s.DefaultPageOrder ?? "")
+                    : (s.DefaultPageOrder ?? ""),
+                // 打印管理新参数
+                UserId = Str(dt, "userId") ?? "",
+                Watermark = Str(dt, "watermark") ?? "",
+                OffsetX = Dbl(dt, "offsetX", 0),
+                OffsetY = Dbl(dt, "offsetY", 0),
+                ReleaseRequired = Bool(dt, "releaseRequired", false) || !string.IsNullOrEmpty(Str(dt, "pin")),
+                PinHash = SecureReleaseService.MakePinHash(Str(dt, "pin"))
             };
         }
 

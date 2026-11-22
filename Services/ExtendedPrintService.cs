@@ -87,6 +87,17 @@ namespace DuoAssistant.Services
             try
             {
                 var local = ResolveLocalFile(job);
+                // 水印叠加（图片类）：生成临时带水印 PNG 供本次打印，不修改原文件
+                string wmTemp = null;
+                if (!string.IsNullOrWhiteSpace(job.Watermark))
+                {
+                    var ext0 = Path.GetExtension(local).ToLowerInvariant();
+                    if (Array.IndexOf(PrintFileTypes.Image, ext0) >= 0)
+                    {
+                        wmTemp = WatermarkService.ApplyToImage(local, job.Watermark);
+                        if (!string.Equals(wmTemp, local, StringComparison.OrdinalIgnoreCase)) local = wmTemp;
+                    }
+                }
                 var ext = Path.GetExtension(local).ToLowerInvariant();
                 var printer = string.IsNullOrWhiteSpace(job.Printer)
                     ? new System.Drawing.Printing.PrinterSettings().PrinterName

@@ -128,6 +128,7 @@ namespace DuoAssistant.Utils
             ["清空已完成"] = "Clear finished",
             ["清空全部"] = "Clear all",
             ["等待中"] = "Pending",
+            ["待认证"] = "Held for release",
             ["打印中"] = "Printing",
             ["已完成"] = "Done",
             ["已取消"] = "Cancelled",

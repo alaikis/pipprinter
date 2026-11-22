@@ -126,6 +126,7 @@ namespace DuoAssistant.Views.Pages
             switch (s)
             {
                 case JobStatus.Pending: return L10n.T("等待中");
+                case JobStatus.Held: return L10n.T("待认证");
                 case JobStatus.Printing: return L10n.T("打印中");
                 case JobStatus.Done: return L10n.T("已完成");
                 case JobStatus.Failed: return L10n.T("失败");
@@ -141,6 +142,7 @@ namespace DuoAssistant.Views.Pages
                 case JobStatus.Done: return Color.FromArgb(22, 101, 52);
                 case JobStatus.Failed: return Color.FromArgb(185, 28, 28);
                 case JobStatus.Printing: return Color.FromArgb(29, 78, 216);
+                case JobStatus.Held: return Color.FromArgb(194, 120, 3);
                 case JobStatus.Cancelled: return Color.Gray;
                 default: return Theme.Text;
             }

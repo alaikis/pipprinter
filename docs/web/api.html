@@ -55,6 +55,24 @@
       <tr><td><span class="badge">POST</span></td><td><code>/api/batch</code></td><td>批量/波次打印：<code>jobs</code> 数组按序入队，返回 <code>groupId</code>/<code>jobIds</code></td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/recall</code></td><td>召回撤回：<code>id</code>（jobId）+ <code>reason</code>，记审计</td></tr>
       <tr><td><span class="badge">POST</span></td><td><code>/api/recommend</code></td><td>智能推荐错峰时段：基于真实打印审计流水</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/jobs/held</code></td><td>安全打印：列出等待 PIN/工卡认证释放的任务</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/release</code></td><td>安全打印认证释放：<code>jobId</code> + <code>pin</code>（PBKDF2 校验）</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/quota</code></td><td>查询用户本月配额与用量：<code>?userId=</code></td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/quota</code></td><td>设置配额：<code>userId</code> + <code>monthlyLimit</code> + <code>colorLimit</code>（0=不限）</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/cost/report</code></td><td>费用流水：<code>?userId=&amp;fromTs=&amp;toTs=</code></td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/report</code></td><td>报表聚合：<code>?groupBy=printer|user|hour|color|engine</code></td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/policy</code></td><td>列出全部打印策略</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/policy</code></td><td>新增/更新策略：用户/打印机/时段匹配 + 强制双面/黑白/禁彩/份数上限</td></tr>
+      <tr><td><span class="badge">DELETE</span></td><td><code>/api/policy</code></td><td>删除策略（body <code>id</code>）</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/archive</code></td><td>查询任务存档：<code>?jobId=</code></td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/driver/packages</code></td><td>列出本地 INF 驱动包（lib/driver 目录）</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/driver/install</code></td><td>从本地 INF 静默安装驱动（pnputil，含路径穿越防护）</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/toner</code></td><td>SNMP 查询打印机墨量：<code>?host=</code></td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/preview</code></td><td>打印预览：渲染指定页为 PNG base64</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/api/inbox</code></td><td>扫描收件箱文件列表（data/inbox）</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/inbox/print</code></td><td>把扫描收件箱文件入队打印（body <code>name</code>）</td></tr>
+      <tr><td><span class="badge ok">GET</span></td><td><code>/webprint</code></td><td>手机浏览器网页打印上传页（移动打印）</td></tr>
+      <tr><td><span class="badge">POST</span></td><td><code>/api/webprint</code></td><td>网页打印上传提交（multipart/form-data）</td></tr>
     </tbody>
   </table>
 
@@ -94,7 +112,38 @@ curl -X POST http://127.0.0.1:19861/api/recommend \
 
 # 5) 召回撤回未开始打印的任务（记审计；printing 出纸后不可撤）
 curl -X POST http://127.0.0.1:19861/api/recall \
-  -H "Content-Type: application/json" -d '{"id":"<jobId>","reason":"客户取消"}'</code></pre>
+  -H "Content-Type: application/json" -d '{"id":"<jobId>","reason":"客户取消"}'
+
+# 6) 安全打印：提交时挂起，到打印机前用 PIN 释放
+curl -X POST http://127.0.0.1:19861/api/print \
+  -H "Content-Type: application/json" \
+  -d '{"path":"C:\\secret\\合同.pdf","pin":"1234","releaseRequired":true}'
+curl http://127.0.0.1:19861/api/jobs/held
+curl -X POST http://127.0.0.1:19861/api/release \
+  -H "Content-Type: application/json" -d '{"jobId":"<jobId>","pin":"1234","releasedBy":"工卡 A001"}'
+
+# 7) 配额与费用：设置月度限额，查询用量与流水
+curl -X POST http://127.0.0.1:19861/api/quota \
+  -H "Content-Type: application/json" -d '{"userId":"sales","monthlyLimit":2000,"colorLimit":300}'
+curl 'http://127.0.0.1:19861/api/quota?userId=sales'
+curl 'http://127.0.0.1:19861/api/cost/report?userId=sales'
+
+# 8) 报表聚合（按打印机/用户/时段/色彩/引擎）
+curl 'http://127.0.0.1:19861/api/report?groupBy=printer'
+
+# 9) 打印策略：工作时段禁止彩色、强制双面
+curl -X POST http://127.0.0.1:19861/api/policy \
+  -H "Content-Type: application/json" \
+  -d '{"name":"工作日黑白双面","startHour":9,"endHour":18,"denyColor":true,"forceDuplex":true,"maxCopies":5}'
+
+# 10) 存档重放 / 预览 / 墨量 / 扫描收件箱
+curl 'http://127.0.0.1:19861/api/archive?jobId=<jobId>'
+curl -X POST http://127.0.0.1:19861/api/preview \
+  -H "Content-Type: application/json" -d '{"path":"C:\\a.pdf","maxPages":3}'
+curl 'http://127.0.0.1:19861/api/toner?host=192.168.1.50'
+curl 'http://127.0.0.1:19861/api/inbox'
+curl -X POST http://127.0.0.1:19861/api/inbox/print \
+  -H "Content-Type: application/json" -d '{"name":"scan-001.pdf"}'</code></pre>
 
   <h2>提交打印任务</h2>
   <pre><code>curl -X POST http://127.0.0.1:19861/api/print \

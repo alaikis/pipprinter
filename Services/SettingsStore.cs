@@ -58,6 +58,16 @@ namespace DuoAssistant.Services
         public string AoDeviceName { get; set; } = "";
         // OFD 转换器可执行文件路径（国产版式文档转 PDF；留空则用系统关联程序）
         public string OfdConverter { get; set; } = "";
+        // ---- 打印管理：费用核算与配额 ----
+        // 黑白/彩色单页成本（用于费用流水与分摊；0 表示不计费）
+        public double CostPerPageBW { get; set; } = 0;
+        public double CostPerPageColor { get; set; } = 0;
+        // 墨量告警阈值百分比（低于该值触发告警；0=关闭）
+        public int TonerLowThreshold { get; set; } = 10;
+        // 墨量 SNMP 轮询间隔（分钟）；0=关闭轮询
+        public int TonerPollMinutes { get; set; } = 60;
+        // 扫描收件目录监听：开启后自动打印 data/inbox 中的新文件
+        public bool InboxWatcherEnabled { get; set; } = false;
     }
 
     /// <summary>
@@ -129,7 +139,12 @@ namespace DuoAssistant.Services
                                                           "ListPrintSlugs", "AddPrinterSlug", "RemovePrinterSlug",
                                                           "ListPrintEvents", "ArchivePrintEvents",
                                                           "SchedulePrint", "ListSchedulePlans", "RemoveSchedulePlan",
-                                                          "PrintBatch", "RecallJob", "RecommendPlan" })
+                                                          "PrintBatch", "RecallJob", "RecommendPlan",
+                                                          "ListHeldJobs", "ReleaseJob", "GetQuota", "SetQuota",
+                                                          "GetCostReport", "GetPrintReport", "ListPolicies", "SetPolicy",
+                                                          "RemovePolicy", "GetArchive", "CleanArchive",
+                                                          "ListDriverPackages", "InstallPrinterDriver", "GetTonerLevels",
+                                                          "PreviewJob", "ListInboxFiles", "PrintInboxFile" })
                                 if (!loaded.AllowedCommands.Exists(x =>
                                         string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
                                     loaded.AllowedCommands.Add(added);
@@ -170,7 +185,11 @@ namespace DuoAssistant.Services
                     "ListPrintSlugs", "AddPrinterSlug", "RemovePrinterSlug",
                     "ListPrintEvents", "ArchivePrintEvents",
                     "SchedulePrint", "ListSchedulePlans", "RemoveSchedulePlan",
-                    "PrintBatch", "RecallJob", "RecommendPlan"
+                    "PrintBatch", "RecallJob", "RecommendPlan",
+                    "ListHeldJobs", "ReleaseJob", "GetQuota", "SetQuota", "GetCostReport", "GetPrintReport",
+                    "ListPolicies", "SetPolicy", "RemovePolicy", "GetArchive", "CleanArchive",
+                    "ListDriverPackages", "InstallPrinterDriver", "GetTonerLevels", "PreviewJob",
+                    "ListInboxFiles", "PrintInboxFile"
                 },
                 CleanWhitelist = new List<string>
                 {

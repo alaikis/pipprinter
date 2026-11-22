@@ -324,6 +324,159 @@ namespace DuoAssistant.Services
                 return Json(CommandDispatcher.Execute("RecommendPlan", body));
             });
 
+            // ---- 打印管理端点（v1.01.011+）----
+            // 安全打印：挂起任务列表 / 认证释放
+            app.MapGet("/api/jobs/held", () => Json(CommandDispatcher.Execute("ListHeldJobs", "{}")));
+            app.MapPost("/api/release", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("ReleaseJob", body));
+            });
+            // 配额与费用
+            app.MapGet("/api/quota", async (HttpContext ctx) =>
+                Json(CommandDispatcher.Execute("GetQuota", "{\"userId\":\"" +
+                    (ctx.Request.Query["userId"].ToString().Replace("\\", "\\\\").Replace("\"", "\\\"")) + "\"}")));
+            app.MapPost("/api/quota", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("SetQuota", body));
+            });
+            app.MapGet("/api/cost/report", async (HttpContext ctx) =>
+            {
+                var q = ctx.Request.Query;
+                var body = "{\"userId\":\"" + Esc(q["userId"]) + "\",\"fromTs\":" +
+                    (long.TryParse(q["fromTs"], out var f) ? f : 0) + ",\"toTs\":" +
+                    (long.TryParse(q["toTs"], out var t) ? t : 0) + "}";
+                return Json(CommandDispatcher.Execute("GetCostReport", body));
+            });
+            // 报表聚合
+            app.MapGet("/api/report", async (HttpContext ctx) =>
+            {
+                var q = ctx.Request.Query;
+                var body = "{\"fromTs\":" + (long.TryParse(q["fromTs"], out var f) ? f : 0) +
+                    ",\"toTs\":" + (long.TryParse(q["toTs"], out var t) ? t : 0) +
+                    ",\"groupBy\":\"" + Esc(q["groupBy"]) + "\"}";
+                return Json(CommandDispatcher.Execute("GetPrintReport", body));
+            });
+            // 打印策略
+            app.MapGet("/api/policy", () => Json(CommandDispatcher.Execute("ListPolicies", "{}")));
+            app.MapPost("/api/policy", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("SetPolicy", body));
+            });
+            app.MapDelete("/api/policy", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("RemovePolicy", body));
+            });
+            // 存档 / 重放
+            app.MapGet("/api/archive", async (HttpContext ctx) =>
+                Json(CommandDispatcher.Execute("GetArchive", "{\"jobId\":\"" + Esc(ctx.Request.Query["jobId"]) + "\"}")));
+            app.MapPost("/api/archive/clean", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("CleanArchive", body));
+            });
+            // 驱动部署
+            app.MapGet("/api/driver/packages", () => Json(CommandDispatcher.Execute("ListDriverPackages", "{}")));
+            app.MapPost("/api/driver/install", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("InstallPrinterDriver", body));
+            });
+            // 墨量
+            app.MapGet("/api/toner", async (HttpContext ctx) =>
+                Json(CommandDispatcher.Execute("GetTonerLevels", "{\"host\":\"" + Esc(ctx.Request.Query["host"]) + "\"}")));
+            // 预览
+            app.MapPost("/api/preview", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("PreviewJob", body));
+            });
+            // 扫描收件箱
+            app.MapGet("/api/inbox", () => Json(CommandDispatcher.Execute("ListInboxFiles", "{}")));
+            app.MapPost("/api/inbox/print", async (HttpContext ctx) =>
+            {
+                string body;
+                using (var reader = new StreamReader(ctx.Request.Body)) body = await reader.ReadToEndAsync();
+                if (string.IsNullOrWhiteSpace(body)) body = "{}";
+                return Json(CommandDispatcher.Execute("PrintInboxFile", body));
+            });
+
+            // ---- 移动打印：Web Print 上传页 + 简化 IPP 端点 ----
+            app.MapGet("/webprint", () => Results.Content(WebPrintHtml, "text/html; charset=utf-8"));
+            app.MapPost("/api/webprint", async (HttpContext ctx) =>
+            {
+                try
+                {
+                    var form = await ctx.Request.ReadFormAsync();
+                    var file = form.Files.GetFile("file");
+                    if (file == null || file.Length == 0)
+                        return Results.Json(new { ok = false, error = "请选择文件" });
+                    var dir = Path.Combine(SettingsStore.Instance.DataDir, "webprint");
+                    Directory.CreateDirectory(dir);
+                    var safe = Path.GetFileName(file.FileName);
+                    var path = Path.Combine(dir, Guid.NewGuid().ToString("N") + "_" + safe);
+                    using (var fs = File.Create(path)) await file.CopyToAsync(fs);
+                    var printer = form["printer"].ToString();
+                    var body = "{\"target\":\"" + Esc(path) + "\",\"printer\":\"" + Esc(printer) +
+                               "\",\"userId\":\"" + Esc(form["userId"].ToString()) + "\"}";
+                    return Json(CommandDispatcher.Execute("AutoPrint", body));
+                }
+                catch (Exception ex) { return Results.Json(new { ok = false, error = ex.Message }); }
+            });
+            // IPP 简化端点：Get-Printer-Attributes（发现）/ Print-Job（提交），供 Mopria/AirPrint 类客户端探测。
+            // 注意：这是 IPP 子集实现，不等于 IPP Everywhere 认证。
+            app.Map("/ipp/print", async (HttpContext ctx) =>
+            {
+                if (string.Equals(ctx.Request.Method, "GET", StringComparison.OrdinalIgnoreCase))
+                {
+                    // 发现探测：返回打印机属性（JSON 形式，供上层映射）
+                    var printers = CommandDispatcher.Execute("GetPrinterList", "{}");
+                    ctx.Response.ContentType = "application/json; charset=utf-8";
+                    await ctx.Response.WriteAsync(printers);
+                    return;
+                }
+                if (string.Equals(ctx.Request.Method, "POST", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        using var ms = new MemoryStream();
+                        await ctx.Request.Body.CopyToAsync(ms);
+                        var dir = Path.Combine(SettingsStore.Instance.DataDir, "webprint");
+                        Directory.CreateDirectory(dir);
+                        var path = Path.Combine(dir, "ipp-" + Guid.NewGuid().ToString("N") + ".bin");
+                        File.WriteAllBytes(path, ms.ToArray());
+                        var body = "{\"target\":\"" + Esc(path) + "\"}";
+                        var res = CommandDispatcher.Execute("AutoPrint", body);
+                        ctx.Response.ContentType = "application/json; charset=utf-8";
+                        await ctx.Response.WriteAsync(res);
+                    }
+                    catch (Exception ex)
+                    {
+                        ctx.Response.StatusCode = 500;
+                        await ctx.Response.WriteAsync(ex.Message);
+                    }
+                    return;
+                }
+                ctx.Response.StatusCode = 405;
+            });
+
             app.MapPost("/api/clean/scan", async (HttpContext ctx) =>
             {
                 string body;
@@ -332,6 +485,21 @@ namespace DuoAssistant.Services
                 return Json(CommandDispatcher.Execute("ScanDisk", body));
             });
         }
+
+        private static string Esc(Microsoft.Extensions.Primitives.StringValues v) =>
+            (v.ToString() ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+        private const string WebPrintHtml = @"<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'><title>网页打印 · Litchio</title>
+<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:40px auto;padding:0 16px;color:#222}
+h1{font-size:22px}input,select,button{font-size:15px;padding:10px;margin:6px 0;width:100%;box-sizing:border-box}
+button{background:#c0392b;color:#fff;border:0;border-radius:6px;cursor:pointer}p{color:#666;font-size:13px}</style></head>
+<body><h1>网页打印</h1><p>手机浏览器上传文档，客户端静默打印。仅在本机服务可达时使用。</p>
+<form id='f'><input type='file' name='file' required><input name='printer' placeholder='打印机名（留空默认）'>
+<input name='userId' placeholder='用户标识（可选，用于配额）'><button type='submit'>打印</button></form><pre id='r'></pre>
+<script>document.getElementById('f').onsubmit=async e=>{e.preventDefault();const fd=new FormData(e.target);
+const r=await fetch('/api/webprint',{method:'POST',body:fd});document.getElementById('r').textContent=await r.text();};</script>
+</body></html>";
 
         public async Task StopAsync()
         {
