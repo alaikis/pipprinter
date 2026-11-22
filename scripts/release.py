@@ -16,18 +16,25 @@ PipPrinter 发版 / 分发助手（把一次性手工操作固化为可复用流
   verify 只读，可不设令牌。
 
 子命令：
+  bump      <ver>              同步全部版本号定义到 <ver>（brand/csproj×3/headless Program）
+  build     <ver>              构建并打包三件套到 out/（dotnet publish + zip + NSIS + manifest）
   manifest  <ver>              由本地 out/ 产物生成扁平 latest.json（真实 size/sha256），写到 out/<ver>.json
   publish   <ver>              把当前版本三件套上传到 Gitee 对应 Release，并校验 /releases/latest 指向
   mirror    <ver> [ver ...]    把历史版本 zip/exe 镜像到 Codeberg Releases（幂等，已存在则跳过）
   verify                       三段复验：Gitee latest 清单 / 官网版本接口 / 下载直链
 
 常用流程（新版本 x.y.z）：
-  1) 打包三件套到 out/（绿色包无 v 名 PipPrinter-win-x64-x.y.z.zip，安装版 PipPrinter-Setup-vx.y.z.exe）
-  2) python scripts/release.py manifest x.y.z
+  1) python scripts/release.py bump x.y.z          # 同步 5 处版本号
+  2) python scripts/release.py build x.y.z         # 构建 + 打三件套 + 生成清单
   3) export GITEE_TOKEN=... ; python scripts/release.py publish x.y.z
   4) 若要把某个旧版迁到 Codeberg：export CODEBERG_TOKEN=... ; python scripts/release.py mirror x.y.z
   5) python scripts/release.py verify
-  6) 官网版本基线 / VersionNote / version-matrix 同步后：cd site && npm run build && npx wrangler deploy
+  6) git commit/tag/push 四端 + 官网版本基线 / VersionNote / version-matrix 同步后：
+     cd site && npm run build && npx wrangler deploy
+
+build 前置：dotnet 10 SDK、NSIS（C:\\Program Files (x86)\\NSIS\\Bin\\makensis.exe）。
+zip 用 Python 标准库 zipfile 打包，不依赖外部 zip 命令；makensis 用 subprocess 直调 exe
+（不经 shell，避免 Git Bash 把 /D 参数当路径改写）。
 """
 
 import argparse
@@ -35,9 +42,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +60,19 @@ CODEBERG_API = f"https://codeberg.org/api/v1/repos/{CODEBERG_OWNER_REPO}"
 
 GREEN_RE = re.compile(r"^PipPrinter-win-x64-.*\.zip$", re.I)
 INSTALLER_RE = re.compile(r"^PipPrinter-Setup-.*\.exe$", re.I)
+
+# 版本号定义位置（bump 用）。每条是 (相对路径, 匹配当前版本号的正则)。
+# 只匹配版本号字段本身，绝不动历史注释（如 ManagementStore.cs 的「v1.01.012 起」）。
+# 正则按 bytes 编译：这些文件是 CRLF 且 Brand.cs 带 BOM，必须字节级替换以原样保留。
+VERSION_FILES = [
+    ("Utils/Brand.cs", rb'(public const string Version = ")\d+\.\d+\.\d+(";)'),
+    ("PipPrinter.csproj", rb"(<Version>)\d+\.\d+\.\d+(</Version>)"),
+    ("AoRelay/AoRelay.csproj", rb"(<Version>)\d+\.\d+\.\d+(</Version>)"),
+    ("headless/Litchio.Headless.csproj", rb"(<Version>)\d+\.\d+\.\d+(</Version>)"),
+    ("headless/Program.cs", rb'(public const string Version = ")\d+\.\d+\.\d+(";)'),
+]
+
+MAKENSIS = Path(r"C:\Program Files (x86)\NSIS\Bin\makensis.exe")
 
 
 def die(msg: str, code: int = 1):
@@ -134,6 +156,124 @@ def find_local(ver: str, pattern: str):
     return hits[0] if hits else None
 
 
+# -------------------------------------------------------------------- bump
+def cmd_bump(args):
+    ver = args.version.lstrip("v")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", ver):
+        die(f"版本号格式应为 X.Y.Z，收到: {ver}")
+    changed = []
+    for rel, pattern in VERSION_FILES:
+        p = ROOT / rel
+        if not p.exists():
+            die(f"版本号文件不存在: {rel}")
+        raw = p.read_bytes()  # 字节级：保留 CRLF 与 BOM
+        new_raw, n = re.subn(pattern, lambda m: m.group(1) + ver.encode() + m.group(2), raw, count=1)
+        if n != 1:
+            die(f"未能在 {rel} 匹配到版本号字段（检查格式是否被改动）")
+        p.write_bytes(new_raw)
+        changed.append(rel)
+    print(f"BUMP -> {ver}")
+    for rel in changed:
+        print(f"  UPDATED {rel}")
+
+
+# -------------------------------------------------------------------- build
+def run_cmd(argv, cwd=None, timeout=1200, env=None):
+    print(f"  RUN {' '.join(str(x) for x in argv)}" + (f"  (cwd={cwd.name})" if cwd else ""))
+    p = subprocess.run([str(x) for x in argv], cwd=str(cwd) if cwd else None, env=env,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-15:])
+    if p.returncode != 0:
+        print(tail)
+        die(f"命令失败 (exit {p.returncode}): {argv[0]}")
+    return p.stdout
+
+
+def build_manifest(ver, zp: Path, ep: Path) -> dict:
+    return {
+        "version": ver,
+        "url": f"{GITEE_DL}/v{ver}/{zp.name}",
+        "setupUrl": f"{GITEE_DL}/v{ver}/{ep.name}",
+        "sha256": sha256_of(zp),
+        "size": zp.stat().st_size,
+        "notes": f"PipPrinter {ver} (win-x64 portable + setup)",
+    }
+
+
+def write_manifest(ver, manifest: dict):
+    OUT.mkdir(exist_ok=True)
+    dest = OUT / f"{ver}.json"
+    dest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"  MANIFEST {dest.name}")
+
+
+def cmd_build(args):
+    ver = args.version.lstrip("v")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", ver):
+        die(f"版本号格式应为 X.Y.Z，收到: {ver}")
+
+    # 前置检查：版本号是否已同步（读取 Brand.cs 的当前值）
+    brand = (ROOT / "Utils/Brand.cs").read_text(encoding="utf-8")
+    m = re.search(r'public const string Version = "(\d+\.\d+\.\d+)";', brand)
+    cur = m.group(1) if m else "?"
+    if cur != ver:
+        die(f"源码版本号={cur} 与目标 {ver} 不一致；先执行: python scripts/release.py bump {ver}")
+
+    if not shutil.which("dotnet"):
+        die("未找到 dotnet（需要 .NET 10 SDK）")
+    if not MAKENSIS.exists():
+        die(f"未找到 NSIS: {MAKENSIS}")
+
+    # 1) dotnet build + publish（self-contained 单文件，参数与 Gitee 流水线一致）
+    # 每次用带版本号的全新目录，既不删除旧目录（沙箱删除保护），也避免陈旧文件混进 zip。
+    publish_dir = ROOT / "release" / f"publish-{ver}"
+    publish_arg = f"..\\release\\publish-{ver}"  # 相对 installer/ 的 Windows 路径
+    env = os.environ.copy()
+    env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
+    env["DOTNET_NOLOGO"] = "1"
+    # -m:1 串行编译：本机内存有限时并行节点会 OOM（dotnet build/publish 曾因此失败）。
+    run_cmd(["dotnet", "restore", "-m:1"], cwd=ROOT, env=env)
+    run_cmd(["dotnet", "build", "-c", "Release", "-m:1", f"-p:Version={ver}", "-p:EnableWindowsTargeting=true"], cwd=ROOT, env=env)
+    run_cmd([
+        "dotnet", "publish", "-c", "Release", "-r", "win-x64",
+        "--self-contained", "true", "-p:PublishSingleFile=true",
+        "-p:IncludeNativeLibrariesForSelfExtract=true", f"-p:Version={ver}",
+        "-p:EnableWindowsTargeting=true", "-m:1", "-o", str(publish_dir),
+    ], cwd=ROOT, env=env)
+
+    # 2) 绿色包：Python zipfile 打包 publish 目录（无 v 命名，避开 Gitee 源码归档覆盖）
+    OUT.mkdir(exist_ok=True)
+    zp = OUT / green_name(ver)
+    with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:  # 'w' 直接覆盖
+        for f in sorted(publish_dir.rglob("*")):
+            if f.is_file():
+                zf.write(f, f.relative_to(publish_dir))
+    print(f"  ZIP {zp.name} ({zp.stat().st_size} B)")
+
+    # 3) 安装版：NSIS（cwd 设为 installer/，OutFile 落在该目录）
+    # NSIS 脚本的 `File /r office-converter/*.*` 是编译期指令，目录为空会直接编译失败
+    # （运行时 ${FileExists} 救不了）。历史构建靠 office-converter/.keep 占位；这里自动补上。
+    oc = publish_dir / "office-converter"
+    oc.mkdir(exist_ok=True)
+    (oc / "README.txt").write_bytes(
+        "Office converter placeholder. Drop portable LibreOffice here to bundle it.\n".encode()
+    )  # 带扩展名的占位，保证 NSIS `File /r *.*` 有文件可打包
+
+    installer_dir = ROOT / "installer"
+    old_setup = installer_dir / exe_name(ver)
+    run_cmd([str(MAKENSIS), f"/DVERSION={ver}", f"/DPUBLISH_DIR={publish_arg}", "PipPrinter.nsi"],
+            cwd=installer_dir, timeout=600)
+    ep = OUT / exe_name(ver)
+    shutil.copyfile(str(old_setup), str(ep))  # copy 覆盖，避免 move/unlink 触发删除保护
+    print(f"  SETUP {ep.name} ({ep.stat().st_size} B)")
+
+    # 4) 扁平 latest.json（真实 sha256/size）
+    manifest = build_manifest(ver, zp, ep)
+    write_manifest(ver, manifest)
+    print("BUILD DONE")
+    print(json.dumps(manifest, ensure_ascii=False, indent=2))
+
+
 # ---------------------------------------------------------------- manifest
 def cmd_manifest(args):
     ver = args.version.lstrip("v")
@@ -144,16 +284,9 @@ def cmd_manifest(args):
     ep = OUT / exe_name(ver)
     if not ep.exists():
         die(f"out/ 下找不到 {ep.name}")
-    manifest = {
-        "version": ver,
-        "url": f"{GITEE_DL}/v{ver}/{zp.name}",
-        "setupUrl": f"{GITEE_DL}/v{ver}/{ep.name}",
-        "sha256": sha256_of(zp),
-        "size": zp.stat().st_size,
-        "notes": f"PipPrinter {ver} (win-x64 portable + setup)",
-    }
+    manifest = build_manifest(ver, zp, ep)
+    write_manifest(ver, manifest)
     dest = OUT / f"{ver}.json"
-    dest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"WROTE {dest.name}")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
@@ -394,6 +527,10 @@ def verify():
 def main():
     ap = argparse.ArgumentParser(description="PipPrinter 发版 / 分发助手")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    pb = sub.add_parser("bump", help="同步全部版本号到指定值")
+    pb.add_argument("version")
+    pd = sub.add_parser("build", help="构建并打包三件套到 out/")
+    pd.add_argument("version")
     p1 = sub.add_parser("manifest", help="由本地产物生成扁平 latest.json")
     p1.add_argument("version")
     p2 = sub.add_parser("publish", help="上传当前版本三件套到 Gitee")
@@ -403,7 +540,11 @@ def main():
     sub.add_parser("verify", help="三段复验")
     args = ap.parse_args()
 
-    if args.cmd == "manifest":
+    if args.cmd == "bump":
+        cmd_bump(args)
+    elif args.cmd == "build":
+        cmd_build(args)
+    elif args.cmd == "manifest":
         cmd_manifest(args)
     elif args.cmd == "publish":
         cmd_publish(args)
