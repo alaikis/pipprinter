@@ -23,6 +23,10 @@ pdfreader/SumatraPDF-settings.txt
 # SignPath: 本地签名私钥（绝不入库）
 installer/*.pfx
 
+# Python 编译缓存（scripts/release.py 等工具）
+__pycache__/
+*.pyc
+
 # headless 跨平台子项目：源码入库，构建产物不入库
 headless/out/
 headless/bin/
