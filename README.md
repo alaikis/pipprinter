@@ -2,6 +2,7 @@
 
 **PipPrinter** 是「荔枝软件」办公套件中的**打印助手**：Windows 64 位桌面应用，提供静默打印、打印自动化、多格式文档直打与网络文件打印能力，并内嵌本机服务对外暴露 REST / WebSocket 接口，供 WMS / ERP / 运维等系统通过 HTTP 直接驱动打印。
 
+- 源码主仓库：https://codeberg.org/alaikis/pipprinter
 - 官方下载：https://www.litchio.com （安装版 exe 与绿色版 zip）
 - 开发者文档：https://www.litchio.com/developers
 - 开源与运行方式：https://www.litchio.com/open-source
