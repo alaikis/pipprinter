@@ -74,6 +74,10 @@ python scripts/release.py mirror 1.01.009
   `office-converter/README.txt` 占位，保证能编译；真实转换器放入该目录即可随包分发。
 - **makensis 不能经 Git Bash 调用**：`/Dxxx` 参数会被 MSYS 当路径改写（变成 `D:/...`）。
   build 用 Python subprocess 直调 exe，绕开 shell。
+- **不分发调试符号（.pdb）**：`dotnet publish` 加 `-p:DebugType=None -p:DebugSymbols=false`
+  从源头不生成 `.pdb`；打包前再清理 publish 目录残留的旧 `.pdb`（同版本二次构建目录复用），
+  zipfile 兜底过滤任何 `.pdb`。绿色包与 NSIS 安装版都不夹带调试符号（避免暴露源码路径信息、
+  减小体积）。此改动只影响新构建版本，已发布版本的 sha256/附件不动。
 - **版本号文件是 CRLF、Brand.cs 带 BOM**：bump 用字节级替换保留原换行/BOM，不误改历史注释。
 
 ## 五、三个必记的分发坑（都踩过）

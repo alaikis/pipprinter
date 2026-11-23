@@ -234,19 +234,33 @@ def cmd_build(args):
     # -m:1 串行编译：本机内存有限时并行节点会 OOM（dotnet build/publish 曾因此失败）。
     run_cmd(["dotnet", "restore", "-m:1"], cwd=ROOT, env=env)
     run_cmd(["dotnet", "build", "-c", "Release", "-m:1", f"-p:Version={ver}", "-p:EnableWindowsTargeting=true"], cwd=ROOT, env=env)
+    # DebugType=None：从源头不生成 .pdb，绿色包与 NSIS 安装版都不再夹带调试符号
+    # （publish 目录无 .pdb → File /r *.* 与 zipfile 打包都不会收进去）。
     run_cmd([
         "dotnet", "publish", "-c", "Release", "-r", "win-x64",
         "--self-contained", "true", "-p:PublishSingleFile=true",
         "-p:IncludeNativeLibrariesForSelfExtract=true", f"-p:Version={ver}",
-        "-p:EnableWindowsTargeting=true", "-m:1", "-o", str(publish_dir),
+        "-p:EnableWindowsTargeting=true", "-p:DebugType=None", "-p:DebugSymbols=false",
+        "-m:1", "-o", str(publish_dir),
     ], cwd=ROOT, env=env)
 
-    # 2) 绿色包：Python zipfile 打包 publish 目录（无 v 命名，避开 Gitee 源码归档覆盖）
+    # 2) 清理 publish 目录里可能残留的旧 .pdb（同版本二次构建时目录复用，旧符号文件不会
+    #    因 DebugType=None 自动消失）。NSIS 的 `File /r *.*` 与下方 zipfile 都读这个目录，
+    #    在这里统一剔除，保证绿色包与安装版都不夹带调试符号。
+    removed = []
+    for f in sorted(publish_dir.rglob("*.pdb")):
+        if f.is_file():
+            f.unlink()
+            removed.append(f.name)
+    if removed:
+        print(f"  STRIPPED {len(removed)} .pdb: {', '.join(removed)}")
+
+    # 绿色包：Python zipfile 打包 publish 目录（无 v 命名，避开 Gitee 源码归档覆盖）
     OUT.mkdir(exist_ok=True)
     zp = OUT / green_name(ver)
     with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:  # 'w' 直接覆盖
         for f in sorted(publish_dir.rglob("*")):
-            if f.is_file():
+            if f.is_file() and f.suffix.lower() != ".pdb":  # 兜底：任何 pdb 都不进包
                 zf.write(f, f.relative_to(publish_dir))
     print(f"  ZIP {zp.name} ({zp.stat().st_size} B)")
 
