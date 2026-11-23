@@ -6,6 +6,8 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Printing;
+using System.Linq;
+using System.Management;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
@@ -28,10 +30,52 @@ namespace DuoAssistant.Services
         [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool SetDefaultPrinter(string name);
 
+        /// <summary>
+        /// 打印机名列表：优先 GDI+（PrinterSettings.InstalledPrinters）。
+        /// GDI+ 枚举在某些环境下（非桌面会话、精简运行时、单文件自包含）偶发返回空，
+        /// 此时回退 WMI Win32_Printer，保证列表不空。来源可通过 <see cref="GetSource"/> 判断。
+        /// </summary>
         public List<string> GetNames()
         {
             var list = new List<string>();
-            foreach (string name in PrinterSettings.InstalledPrinters) list.Add(name);
+            try
+            {
+                foreach (string name in PrinterSettings.InstalledPrinters) list.Add(name);
+            }
+            catch { /* GDI+ 枚举失败则回退 WMI */ }
+            if (list.Count > 0)
+            {
+                _source = "gdi";
+                return list;
+            }
+            // 回退：WMI（与 LanPrinterScanner 同源，无需驱动/会话）
+            var wmi = WmiNames();
+            _source = wmi.Count > 0 ? "wmi" : "none";
+            return wmi;
+        }
+
+        /// <summary>最近一次 <see cref="GetNames"/> 的枚举来源：gdi / wmi / none。</summary>
+        public string GetSource() => _source;
+        private string _source = "gdi";
+
+        /// <summary>WMI 枚举已安装打印机名（含网络/本地），失败或无 WMI 返回空列表。</summary>
+        private static List<string> WmiNames()
+        {
+            var list = new List<string>();
+            try
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_Printer");
+                using var items = searcher.Get();
+                foreach (ManagementObject o in items)
+                {
+                    var name = o["Name"] as string;
+                    if (!string.IsNullOrWhiteSpace(name)) list.Add(name);
+                }
+            }
+            catch (Exception ex)
+            {
+                DuoAssistant.Utils.Tools.Logger("WMI 打印机枚举回退失败: " + ex.Message);
+            }
             return list;
         }
 
@@ -45,7 +89,9 @@ namespace DuoAssistant.Services
         {
             var result = new List<PrinterInfo>();
             var def = GetDefault();
-            foreach (string name in PrinterSettings.InstalledPrinters)
+            // GDI+ 失败/为空时回退 WMI（复用 GetNames 的来源判定），保证 detail 不空
+            var names = GetNames();
+            foreach (var name in names)
             {
                 var info = new PrinterInfo { Name = name, IsDefault = name == def };
                 try

@@ -244,25 +244,37 @@ def cmd_build(args):
         "-m:1", "-o", str(publish_dir),
     ], cwd=ROOT, env=env)
 
-    # 2) 清理 publish 目录里可能残留的旧 .pdb（同版本二次构建时目录复用，旧符号文件不会
-    #    因 DebugType=None 自动消失）。NSIS 的 `File /r *.*` 与下方 zipfile 都读这个目录，
-    #    在这里统一剔除，保证绿色包与安装版都不夹带调试符号。
+    # 2) 清理 publish 目录里不该进客户端包的产物：
+    #    - 旧 .pdb（同版本二次构建目录复用时残留；DebugType=None 不会自动清掉）
+    #    - AoRelay.exe（.sln 里的中继服务器独立项目，dotnet publish 整目录时会把它发出来，
+    #      客户端绿色包不需要它；夹带会使包体从 ~90MB 涨到 130MB+，超 Gitee 单附件 100MB 限制）
+    #      NSIS 的 `File /r *.*` 与下方 zipfile 都读这个目录，在这里统一剔除。
     removed = []
     for f in sorted(publish_dir.rglob("*.pdb")):
         if f.is_file():
             f.unlink()
             removed.append(f.name)
+    for f in sorted(publish_dir.rglob("AoRelay.*")):
+        if f.is_file():
+            f.unlink()
+            removed.append(f.name)
     if removed:
-        print(f"  STRIPPED {len(removed)} .pdb: {', '.join(removed)}")
+        print(f"  STRIPPED {len(removed)}: {', '.join(removed)}")
 
     # 绿色包：Python zipfile 打包 publish 目录（无 v 命名，避开 Gitee 源码归档覆盖）
     OUT.mkdir(exist_ok=True)
     zp = OUT / green_name(ver)
     with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:  # 'w' 直接覆盖
         for f in sorted(publish_dir.rglob("*")):
-            if f.is_file() and f.suffix.lower() != ".pdb":  # 兜底：任何 pdb 都不进包
+            # 兜底过滤：pdb 与 AoRelay 服务端产物都不进客户端包
+            if f.is_file() and f.suffix.lower() != ".pdb" and not f.name.lower().startswith("aorelay"):
                 zf.write(f, f.relative_to(publish_dir))
     print(f"  ZIP {zp.name} ({zp.stat().st_size} B)")
+    # Gitee 单附件 100MB 限制：绿色包超限会导致 publish 上传失败，提前报警
+    limit = 100 * 1024 * 1024
+    if zp.stat().st_size > limit:
+        die(f"绿色包 {zp.stat().st_size // 1048576}MB 超过 Gitee 单附件 100MB 限制，"
+            f"请检查 publish 目录是否又夹带了非客户端产物")
 
     # 3) 安装版：NSIS（cwd 设为 installer/，OutFile 落在该目录）
     # NSIS 脚本的 `File /r office-converter/*.*` 是编译期指令，目录为空会直接编译失败
@@ -374,10 +386,13 @@ def cmd_publish(args):
     had = existing.copy()
 
     # 同名附件先删再传，避免 Gitee 旧附件优先导致内容不更新。
+    # 注意：上传失败/超限时 Gitee 可能返回缺 id 的 asset 记录，必须 a.get("id") 兜底，
+    # 否则会 KeyError（曾发生：zip 超 100MB 上传失败后，重试 publish 卡在这里）。
     for a in rel.get("assets", []):
         name = a.get("name")
-        if name in {zp.name, ep.name, "latest.json"}:
-            curl(f"{GITEE_API}/releases/{rid}/attach_files/{a['id']}", h + ["-X", "DELETE"])
+        aid = a.get("id")
+        if aid and name in {zp.name, ep.name, "latest.json"}:
+            curl(f"{GITEE_API}/releases/{rid}/attach_files/{aid}", h + ["-X", "DELETE"])
 
     assert had is not None  # 保持逻辑清晰：existing 仅用于诊断
     upload_gitee_asset(rid, zp, h)

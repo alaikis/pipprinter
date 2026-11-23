@@ -896,16 +896,23 @@ namespace DuoAssistant.Services
 
         // ------------------------------------------------------------ 打印机
 
-        /// <summary>保留旧结构（printers: string[]、primary），并附 detail。</summary>
+        /// <summary>保留旧结构（printers: string[]、primary），并附 detail 与 source（gdi/wmi/none）。</summary>
         public string GetPrinterList(string args)
         {
             var names = _printers.GetNames();
-            return Result.success(data: new
+            var source = _printers.GetSource();
+            var data = new
             {
                 printers = names,
                 primary = _printers.GetDefault(),
-                detail = _printers.GetInstalled()
-            }, cmd: "GetPrinterList");
+                detail = _printers.GetInstalled(),
+                source
+            };
+            // GDI+ 为空时已自动回退 WMI；若仍为空，给出可诊断的提示而非静默
+            if (names.Count == 0)
+                return Result.success(data, cmd: "GetPrinterList",
+                    msg: "未检测到任何打印机（GDI+ 与 WMI 枚举均为空）");
+            return Result.success(data, cmd: "GetPrinterList");
         }
 
         public string GetPrinterDetail(string args) =>

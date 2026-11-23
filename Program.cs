@@ -33,14 +33,23 @@ namespace DuoAssistant
             var headless = Array.Exists(args, a => string.Equals(a, "--headless", StringComparison.OrdinalIgnoreCase));
             if (headless) { RunHeadless(); return; }
 
-            // 单实例：避免 WS/Web 端口被第二个进程抢占
-            _singleInstance = new Mutex(true, @"Global\PipPrinter_2_0", out bool created);
+            // 单实例（版本感知）：锁名带版本号，避免「旧版占锁 → 新版弹『已在运行』被挡、
+            // 永远接管不了 19861」的问题。同版本重复启动仍拒绝（端口只能一个监听者）；
+            // 不同版本可共存以便升级替换——新版起来后会探测旧版并提示结束。
+            _singleInstance = new Mutex(true,
+                @"Global\PipPrinter_" + Utils.Brand.Version.Replace(".", "_"), out bool created);
             if (!created)
             {
+                // 同版本已运行：保持旧的「已在运行」语义
                 MessageBox.Show(Utils.Brand.Title + Utils.L10n.T("已在系统托盘中运行。"), Utils.L10n.T("提示"),
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+
+            // 版本感知：若 19861 已被「更低版本」实例占用（升级未重启遗留），提示并建议结束旧版。
+            // 旧版若仍占着端口，本实例的 Kestrel 会绑定失败（已被 WebServerService 捕获、不崩溃），
+            // 此时提示用户结束旧进程后重启新版，避免请求继续落到旧版上。
+            ProbeStaleInstance();
 
             // 清理上次自动更新留下的 PipPrinter.exe.old-*（旧进程已退出，此时可删）
             UpdateService.CleanupLeftovers();
@@ -147,6 +156,43 @@ namespace DuoAssistant
                 DuoAssistant.Services.InboxWatcherService.Stop();
                 PrintQueueService.Instance.Shutdown();
                 _singleInstance?.ReleaseMutex();
+            }
+        }
+
+        /// <summary>
+        /// 探测本机 19861 上是否驻留着「更低版本」的旧实例（升级后未重启的遗留进程）。
+        /// 旧版占用时，本实例的 Web 服务会绑定失败（已被 WebServerService 捕获、不崩溃），
+        /// 若不在这里提示，用户会误以为新版正常、而请求实际落在旧版上（表现为「获取不到列表」等）。
+        /// 这里打旧版 /health 取版本号做比对，命中旧版就明确提示结束旧进程再重启新版。
+        /// </summary>
+        private static void ProbeStaleInstance()
+        {
+            try
+            {
+                var port = SettingsStore.Instance.Current.WebPort;
+                if (port <= 0) return;
+                var healthUrl = "http://127.0.0.1:" + port + "/health";
+                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(4) };
+                var json = http.GetStringAsync(healthUrl).GetAwaiter().GetResult();
+                var version = Newtonsoft.Json.Linq.JToken.Parse(json)["version"]?.ToString();
+                if (string.IsNullOrWhiteSpace(version)) return;
+                // 对方比当前版本旧（UpdateService.IsNewer(当前, 对方) 为真 → 当前更新 → 对方是旧版）
+                if (DuoAssistant.Services.UpdateService.IsNewer(Utils.Brand.Version, version))
+                {
+                    var msg = string.Format(
+                        "检测到旧版本 v{0} 仍在运行并占用服务端口。\n" +
+                        "当前为 v{1}，旧版本会占用端口、导致新逻辑（如打印机列表）不生效。\n\n" +
+                        "请在任务管理器结束名为 PipPrinter 的旧版进程，再启动本新版；\n" +
+                        "或等待旧版自动更新后重启。", version, Utils.Brand.Version);
+                    MessageBox.Show(Utils.Brand.Title + "\r\n" + msg,
+                        Utils.L10n.T("提示"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    Utils.Tools.Logger("检测到旧版本实例 v" + version + " 占用端口 " + port +
+                                        "（当前 v" + Utils.Brand.Version + "）");
+                }
+            }
+            catch
+            {
+                // 端口无响应（旧进程未起 Web 或已退出）或解析失败：静默，不影响启动
             }
         }
 
