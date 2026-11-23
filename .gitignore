@@ -35,3 +35,6 @@ headless/data/
 
 # EmDash CMS（独立 Cloudflare 部署，非 OSS 主仓库）
 /emdash/
+
+# Gitee 附件清理前的本地快照（非代码，勿入库）
+.gitee-backup/

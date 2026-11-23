@@ -115,6 +115,11 @@ python scripts/release.py mirror 1.01.009
 
 - 线上最新：**v1.01.013**（source:live / 官网 size=93488370 / sha 8bfd0347…）
 - 绿色包 size `93488370`、sha256 `8bfd03475cd25b7568a67b889baa421a70ebb21c82cca1be7ce88faf40a37e86`
-  （v1.01.013 已剔除服务端 AoRelay.exe 与 .pdb；安装版因 Gitee 仓库附件 1GB 配额满暂未上 Gitee，
-  待配额清理后补传——自动更新只依赖绿色包 latest.json，不受影响）
+  （已剔除服务端 AoRelay.exe 与 .pdb）
+- 安装版 exe size `67877111`、sha256 `62c02abdc52095f636a1d1186e8cbea8275b036888eca5966f22d40da1649674`
+  （v1.01.013 三件套已齐：绿色包 asset 3802005 / latest.json 3802006 / 安装版 exe 3806552，下载直链全 200）
+- **Gitee 配额全清落地（2026-11-24）**：为腾出 013 安装版 65MB，已删除 001–012 全部真上传附件
+  （绿色包 + 安装版 exe + latest.json，共 11 条），仅保留 Gitee 自动源码归档 `vX.zip/.tar.gz`
+  （无 id、随 tag 重建、不占真配额）。清理前快照存 `.gitee-backup/gitee-releases-before-fullclear.json`（已 gitignore）。
+  删除走各 Release 专属 `attach_files` 端点（releases 列表端点 asset 不带 id 无法删）；013 绿色包与 latest.json 保留不动。
 - Gitee 当前 Release id 见 `verify` 输出；历史 v1.01.003–009 在 Codeberg。
