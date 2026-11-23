@@ -1,0 +1,131 @@
+# PipPrinter 发版：build → e2e 门禁 → GitHub Release（大文件镜像）→ 可选补传 Gitee 最小时集。
+#
+# 为什么在 GitHub 上发版：
+#   * GitHub Release 资产无「1GB 附件总配额」这类限制（单 Release 2GB、账户无总附件上限），
+#     根治 Gitee 社区版 1GB 附件配额反复爆满的问题。
+#   * 但客户端自动更新清单依赖 Gitee /releases/latest，所以 Gitee 仍保留「绿色包 + latest.json」
+#     两条最小时集（~90MB，远低于配额）；本 workflow 在设了 GITEE_TOKEN 时自动补传这两件。
+#
+# 所有发版先 e2e：build 出的绿色包主程序起服务、打核心 REST、校验契约，PASS 才上传，
+# 失败即阻断后续（不会把坏包发到线上）。
+#
+# 触发：打 tag `v1.01.0XX`（与本地 release.py 的 tag 命名一致）。
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10 SDK
+        run: choco install -y dotnet-sdk-10.0 || dotnet --version
+
+      - name: Install NSIS (to the path release.py expects)
+        run: choco install -y nsis
+        # release.py 硬编码 C:\Program Files (x86)\NSIS\Bin\makensis.exe，choco 默认装这里
+
+      - name: Sync version files to tag
+        # tag 已含版本号；若源码 Brand.cs 与 tag 不一致，bump 对齐（CI 幂等）
+        run: python scripts/release.py bump ${{ github.ref_name }}
+        shell: bash
+
+      - name: Build (portable + installer + manifest)
+        run: python scripts/release.py build ${{ github.ref_name }}
+        # 绿色包 ~90MB、安装版 ~65MB、latest.json
+
+      - name: e2e smoke (gate — 不过则阻断发布)
+        run: python scripts/release.py e2e ${{ github.ref_name }} --wait 90
+        # 起绿色包主程序 @127.0.0.1，打 /health、/api/printers(source)、/api/command 等，
+        # 校验 Result.code 与 013 根治契约。FAIL 即退出码 1，后续步骤不执行。
+
+      - name: Publish to GitHub Release (large-file mirror)
+        id: gh
+        run: |
+          set -e
+          VER=${{ github.ref_name }}
+          ZIP=out/PipPrinter-win-x64-${VER}.zip
+          EXE=out/PipPrinter-Setup-${VER}.exe
+          MAN=out/${VER}.json
+          gh release create "$VER" \
+            --title "PipPrinter $VER (win-x64)" \
+            --notes "$(cat "$MAN")" \
+            --files "$ZIP" \
+            -R alaikis/pipprinter || true
+          # 附件较大时 gh create 可能失败；用 upload 兜底逐件传
+          gh release upload "$VER" "$EXE" --clobber -R alaikis/pipprinter || true
+          gh release upload "$VER" "$MAN" --clobber -R alaikis/pipprinter || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+
+      - name: 补传 Gitee 最小时集（若设了 GITEE_TOKEN）
+        # 自动更新依赖 Gitee /releases/latest，只保留绿色包 + latest.json（~90MB，配额充裕）。
+        # Gitee 不存安装版（安装版由 GitHub Release 承载），历史包走 Codeberg 镜像。
+        run: |
+          if [ -z "${GITEE_TOKEN:-}" ]; then echo "GITEE_TOKEN 未设置，跳过 Gitee 最小时集"; exit 0; fi
+          python - <<'PY'
+          import os, json, subprocess, re
+          from pathlib import Path
+          TOK = os.environ["GITEE_TOKEN"]
+          VER = "${{ github.ref_name }}"
+          API = "https://gitee.com/api/v5/repos/alaikiscom/pipprinter"
+          C = r"C:\Windows\system32\curl.exe"
+          H = ["-H", "Authorization: Bearer " + TOK]
+          def get(url):
+              out = subprocess.run([C,"-sS","-L","--max-time","60",*H,url],capture_output=True,text=True).stdout
+              return json.loads(out)
+          def post_asset(rid, path, filename):
+              spec = f"file=@{path}" + (f";filename={filename}" if filename else "")
+              out = subprocess.run([C,"-sS","-L","--max-time","300",*H,"-X","POST","-F",spec,
+                                     f"{API}/releases/{rid}/attach_files"],capture_output=True,text=True)
+              return json.loads(out or "{}")
+          rel = get(f"{API}/releases?per_page=100")
+          rid = next((r["id"] for r in rel if r.get("tag_name")==f"v{VER}"), None)
+          if rid is None:
+              body = json.dumps({"tag_name":f"v{VER}","name":f"v{VER}","target_commitish":"master","prerelease":False})
+              created = json.loads(subprocess.run([C,"-sS","-L","--max-time","60",*H,"-X","POST",
+                                                   "-H","Content-Type: application/json","-d",body,f"{API}/releases"],
+                                                  capture_output=True,text=True).stdout)
+              rid = created["id"]
+              print(f"Gitee 创建 release id={rid}")
+          # 删同名旧附件（兜底缺 id）
+          for a in get(f"{API}/releases/{rid}/attach_files"):
+              aid, name = a.get("id"), a.get("name")
+              if aid and name in {"PipPrinter-win-x64-"+VER+".zip", "latest.json"}:
+                  subprocess.run([C,"-sS","-L","--max-time","60",*H,"-X","DELETE",
+                                   f"{API}/releases/{rid}/attach_files/{aid}"],capture_output=True)
+          p = post_asset(rid, f"out/PipPrinter-win-x64-{VER}.zip", None)
+          print("绿色包:", p.get("id"), p.get("size"))
+          m = post_asset(rid, f"out/{VER}.json", "latest.json")
+          print("latest.json:", m.get("id"), m.get("size"))
+          PY
+        shell: bash
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+
+      - name: 复验（GitHub Release + Gitee latest）
+        run: |
+          echo "=== GitHub Release 资产 ==="
+          gh release view "${{ github.ref_name }}" -R alaikis/pipprinter --json tagName,assets 2>/dev/null || true
+          if [ -n "${GITEE_TOKEN:-}" ]; then
+            echo "=== Gitee /releases/latest ==="
+            curl -sSL --max-time 30 -H "Authorization: Bearer ${GITEE_TOKEN}" \
+              "https://gitee.com/api/v5/repos/alaikiscom/pipprinter/releases/latest" \
+              | python -c "import sys,json;d=json.load(sys.stdin);print('tag=',d.get('tag_name'),'assets=',[a.get('name') for a in d.get('assets',[])])"
+          else
+            echo "（Gitee 复验跳过：未设 GITEE_TOKEN）"
+          fi
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}

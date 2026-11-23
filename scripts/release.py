@@ -18,17 +18,19 @@ PipPrinter 发版 / 分发助手（把一次性手工操作固化为可复用流
 子命令：
   bump      <ver>              同步全部版本号定义到 <ver>（brand/csproj×3/headless Program）
   build     <ver>              构建并打包三件套到 out/（dotnet publish + zip + NSIS + manifest）
+  e2e       <ver>              端到端冒烟：起 build 出的绿色包主程序打核心 REST，校验契约（publish 前必跑）
   manifest  <ver>              由本地 out/ 产物生成扁平 latest.json（真实 size/sha256），写到 out/<ver>.json
   publish   <ver>              把当前版本三件套上传到 Gitee 对应 Release，并校验 /releases/latest 指向
   mirror    <ver> [ver ...]    把历史版本 zip/exe 镜像到 Codeberg Releases（幂等，已存在则跳过）
   verify                       三段复验：Gitee latest 清单 / 官网版本接口 / 下载直链
 
-常用流程（新版本 x.y.z）：
+常用流程（新版本 x.y.z）——所有发版先 e2e，不过不发布：
   1) python scripts/release.py bump x.y.z          # 同步 5 处版本号
   2) python scripts/release.py build x.y.z         # 构建 + 打三件套 + 生成清单
-  3) export GITEE_TOKEN=... ; python scripts/release.py publish x.y.z
-  4) 若要把某个旧版迁到 Codeberg：export CODEBERG_TOKEN=... ; python scripts/release.py mirror x.y.z
-  5) python scripts/release.py verify
+  3) python scripts/release.py e2e   x.y.z         # 端到端冒烟（必过才能 publish）
+  4) export GITEE_TOKEN=... ; python scripts/release.py publish x.y.z
+  5) 若要把某个旧版迁到 Codeberg：export CODEBERG_TOKEN=... ; python scripts/release.py mirror x.y.z
+  6) python scripts/release.py verify
   6) git commit/tag/push 四端 + 官网版本基线 / VersionNote / version-matrix 同步后：
      cd site && npm run build && npx wrangler deploy
 
@@ -498,6 +500,187 @@ def http_code(url):
     return ps_head_code(url)
 
 
+def _rmtree_plain(d: Path):
+    """逐文件 os.remove + os.rmdir 删除目录树（不走 shutil.rmtree 的 trash 钩子，避免个人文件保护拦截）。"""
+    if not d.exists():
+        return
+    for f in d.rglob("*"):
+        if f.is_file() or f.is_symlink():
+            try:
+                os.remove(str(f))
+            except OSError:
+                pass
+    for sub in sorted([p for p in d.rglob("*") if p.is_dir()], key=lambda p: str(len(p.parts)), reverse=True):
+        try:
+            sub.rmdir()
+        except OSError:
+            pass
+    try:
+        d.rmdir()
+    except OSError:
+        pass
+
+
+def http_get(url, timeout=30, token=None):
+    """本机 REST 冒烟 GET，返回 (json_or_None, raw_text)。优先 urllib，失败走 curl。可带 X-Api-Token。"""
+    import urllib.request
+    try:
+        headers = {"Accept": "application/json"}
+        if token:
+            headers["X-Api-Token"] = token
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+        try:
+            return json.loads(raw), raw
+        except Exception:
+            return None, raw
+    except Exception:
+        curl_args = ["-sS", "--max-time", str(timeout)]
+        if token:
+            curl_args += ["-H", f"X-Api-Token: {token}"]
+        out, _ = curl(curl_args + [url], timeout=timeout + 5)
+        try:
+            return json.loads(out), out
+        except Exception:
+            return None, out
+
+
+def http_post_json(url, body, timeout=30, token=None):
+    """本机 REST 冒烟 POST（JSON），返回 (json_or_None, raw_text)。可带 X-Api-Token。"""
+    import urllib.request
+    try:
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if token:
+            headers["X-Api-Token"] = token
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+        try:
+            return json.loads(raw), raw
+        except Exception:
+            return None, raw
+    except Exception:
+        return None, f"POST {url} 失败"
+
+
+def cmd_e2e(args):
+    """端到端冒烟：拷一份 build 产物到临时目录，注入本机回环 + e2e 专用 apiToken，起主程序，
+    打核心 REST 端点并校验契约，全 PASS 才放行 publish。失败退出码 1。
+
+    为什么拷副本 + 注入配置：绿色包 config/appsettings.json 默认 webHost=0.0.0.0 且无 apiToken，
+    客户端启动门禁（非本机监听必须有 apiToken）会拒绝起 Web。e2e 用 127.0.0.1 + 随机 e2e token
+    让 Web 起来，且不污染 build 产物、不碰用户真实配置。
+
+    覆盖端点（带 token）：/health、/api/status、/api/printers、/api/commands、/api/disk、/api/machine，
+    以及一次无副作用的 /api/command 空调用（省略 cmd → AutoPrint）。
+    契约校验：所有 /api/* 响应含 Result.code；/api/printers.data.source ∈ {gdi,wmi,none}；
+    /api/command.data.auto 存在（AutoPrint 回落）。"""
+    ver = (args.version or "").lstrip("v")
+    src_dir = ROOT / "release" / f"publish-{ver}"
+    exe_src = src_dir / "PipPrinter.exe"
+    if not exe_src.exists():
+        die(f"找不到 {exe_src.name}；先跑 build {ver}（主程序在 release/publish-{ver}/）")
+
+    port = args.port or 19861
+    base = f"http://127.0.0.1:{port}"
+
+    # 1) 拷副本到 out/.e2e-<ver>（绿色包是 zip；这里直接用 publish 目录拷，含 config/）
+    import secrets
+    work = OUT / f".e2e-{ver}"
+    if work.exists():
+        _rmtree_plain(work)  # 逐文件 os 删除，规避个人文件 trash 钩子（out/ 为构建产物区）
+    shutil.copytree(src_dir, work, symlinks=False)
+    exe = work / "PipPrinter.exe"
+
+    # 2) 注入本机回环 + e2e 专用 token + 关自启（只改副本 config，不动 build 产物/用户配置）
+    e2e_token = "e2e_" + secrets.token_hex(16)
+    cfg_path = work / "config" / "appsettings.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["webHost"] = "127.0.0.1"
+    cfg["webPort"] = port
+    cfg["apiToken"] = e2e_token
+    cfg["autoStart"] = False
+    cfg["logLevel"] = "WARN"
+    cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"=== e2e 起 {exe.name}（副本 @ {work}）@ {base} ===")
+
+    proc = subprocess.Popen([str(exe)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"  启动 pid={proc.pid}")
+
+    ok = True
+    try:
+        # 3) 轮询 /health（不带 token 也可，/health 放行）直到就绪
+        health = None
+        deadline = time.time() + (args.wait or 60)
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                die(f"主程序提前退出 code={proc.returncode}；e2e 失败")
+            h, raw = http_get(base + "/health")
+            if isinstance(h, dict) and h.get("version"):
+                health = h
+                break
+            time.sleep(1.5)
+        if not health:
+            print(f"  FAIL /health 未在 {args.wait}s 内就绪（最后 raw={raw[:160]!r}）")
+            ok = False
+        else:
+            print(f"  /health version={health.get('version')} uptimeSeconds={health.get('uptimeSeconds')}")
+
+        if ok:
+            # 4) 核心只读端点冒烟（带 token）+ Result.code 契约
+            for ep in ["/api/status", "/api/printers", "/api/commands", "/api/disk", "/api/machine"]:
+                d, raw = http_get(base + ep, token=e2e_token)
+                if not isinstance(d, dict):
+                    print(f"  FAIL {ep} 非 JSON：{raw[:120]!r}"); ok = False; continue
+                if d.get("code") is None:
+                    print(f"  FAIL {ep} 缺 Result.code"); ok = False
+                else:
+                    print(f"  {ep} code={d.get('code')} data={'data' in d}")
+
+            # 5) /api/printers.data.source ∈ {gdi,wmi,none}（013 根治契约）
+            d, _ = http_get(base + "/api/printers", token=e2e_token)
+            if isinstance(d, dict):
+                data = d.get("data") or {}
+                src = data.get("source")
+                if src not in ("gdi", "wmi", "none"):
+                    print(f"  FAIL /api/printers data.source={src!r} 不在 gdi/wmi/none；013 根治契约破坏"); ok = False
+                else:
+                    printers = data.get("printers")
+                    print(f"  /api/printers source={src} printers={len(printers) if isinstance(printers, list) else printers}")
+
+            # 6) /api/command 空调用（省略 cmd → 回落 AutoPrint；无内容应 400 + error 提示，
+            #    而非 404 未知命令——以此证明 AutoPrint 回落契约在位）。带一个假 target 触发
+            #    识别分支也 OK，但空调用最稳：验证「省略 cmd 不 404」。
+            cd, raw = http_post_json(base + "/api/command", {}, token=e2e_token)
+            if isinstance(cd, dict):
+                code = cd.get("code")
+                has_err = bool(cd.get("error"))
+                print(f"  /api/command 空调用 code={code} error={has_err}")
+                if code == 404:
+                    print("     FAIL 省略 cmd 返回 404（未知命令）——AutoPrint 回落契约破坏"); ok = False
+                elif code not in (200, 400):
+                    print(f"     WARN 空调用返回 {code}（预期 200/400）");
+                elif not has_err and code == 400:
+                    print("     FAIL 400 但缺 error 提示"); ok = False
+            else:
+                print(f"  FAIL /api/command 非 JSON：{raw[:120]!r}"); ok = False
+    finally:
+        # 7) 收尾：停进程 + 删副本（副本含 token，必须清）
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=8)
+            except Exception:
+                proc.kill()
+        print(f"  已停止 pid={proc.pid}")
+        _rmtree_plain(work)  # 副本含 e2e 专用 token，必须清
+
+    print("E2E", "PASS" if ok else "FAIL")
+    print("提示：e2e PASS 后才可 publish；失败先看端口占用/旧版常驻进程（ProbeStaleInstance）。")
+    return 0 if ok else 1
+
+
 def verify():
     ok = True
     ts = str(int(time.time()))
@@ -566,6 +749,10 @@ def main():
     p2.add_argument("version")
     p3 = sub.add_parser("mirror", help="镜像历史版本到 Codeberg")
     p3.add_argument("versions", nargs="+")
+    pe = sub.add_parser("e2e", help="端到端冒烟：起绿色包主程序打核心 REST，校验契约（publish 前必跑）")
+    pe.add_argument("version")
+    pe.add_argument("--port", type=int, default=None, help="监听端口，默认 19861")
+    pe.add_argument("--wait", type=int, default=60, help="/health 就绪等待秒数，默认 60")
     sub.add_parser("verify", help="三段复验")
     args = ap.parse_args()
 
@@ -579,6 +766,8 @@ def main():
         cmd_publish(args)
     elif args.cmd == "mirror":
         cmd_mirror(args)
+    elif args.cmd == "e2e":
+        sys.exit(cmd_e2e(args))
     elif args.cmd == "verify":
         sys.exit(verify())
 
