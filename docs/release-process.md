@@ -78,6 +78,10 @@ python scripts/release.py mirror 1.01.009
   从源头不生成 `.pdb`；打包前再清理 publish 目录残留的旧 `.pdb`（同版本二次构建目录复用），
   zipfile 兜底过滤任何 `.pdb`。绿色包与 NSIS 安装版都不夹带调试符号（避免暴露源码路径信息、
   减小体积）。此改动只影响新构建版本，已发布版本的 sha256/附件不动。
+- **绿色包不能夹带服务端 AoRelay.exe**：`PipPrinter.sln` 里 AoRelay 是独立控制台项目，
+  `dotnet publish` 整目录时会把 `AoRelay.exe`（~43MB）也发进 publish 目录，被 zip 误收后
+  绿色包从 ~90MB 涨到 130MB+，超 Gitee 单附件 100MB 限制、上传失败。build 已 `rglob("AoRelay.*")`
+  剔除并在 zipfile 处按 `aorelay` 前缀兜底过滤，另加 100MB 体积守卫（超限直接 die）。
 - **版本号文件是 CRLF、Brand.cs 带 BOM**：bump 用字节级替换保留原换行/BOM，不误改历史注释。
 
 ## 五、三个必记的分发坑（都踩过）
@@ -92,6 +96,14 @@ python scripts/release.py mirror 1.01.009
 3. **Gitee 附件总配额 1 GB**。绿色包 zip 文件名不能以 `v` 开头（`v<tag>.zip` 会被
    源码归档覆盖，几小时后直链 404）；用无 v 的 `PipPrinter-win-x64-<version>.zip`。
    历史包放 Codeberg；同名附件重传前先删旧附件。
+4. **Gitee 单附件 100MB 上限 + 仓库 1GB 总配额**。绿色包（含 .NET 自包含单文件 ~90MB）压线；
+   若夹带无关产物（如服务端 `AoRelay.exe`）会超 100MB 单附件上限、上传直接失败。
+   仓库总配额满时，新附件（哪怕几 KB 的 latest.json）也传不上 → 旧同名记录继续服务 →
+   **清单 sha/size 与真实 zip 不一致 → 客户端 SHA256 校验失败、更新卡住**。处置：
+   - 先清历史附件腾额度（历史包已镜像 Codeberg，可安全删 Gitee 旧版附件）；
+   - 或重建该 Release（删旧 release + 新建 + 只传绿色包与 latest.json）；
+   - 自动更新只依赖绿色包 `latest.json`，安装版 exe 可暂缺、不影响更新链路，配额清理后补传。
+   - publish 脚本删附件用 `a.get("id")` 兜底（配额满时 Gitee 返回缺 id 的 asset 记录）。
 
 ## 六、本地网络注意
 
@@ -99,8 +111,10 @@ python scripts/release.py mirror 1.01.009
 （Gitee 正常）。`release.py` 的只读请求已加 PowerShell 兜底，故 `verify` 在本机可正常跑。
 换环境时 curl 优先，兜底仅在失败时触发。
 
-## 七、当前基线（最后更新 2026-11-22）
+## 七、当前基线（最后更新 2026-11-23）
 
-- 线上最新：**v1.01.012**（source:live / stale:false）
-- 绿色包 size `97715812`、sha256 `dfd6b251d44ba726f6eb9037af9adc6e24c5eb5cb0b09bd55d7770fdbb834cfc`
+- 线上最新：**v1.01.013**（source:live / 官网 size=93488370 / sha 8bfd0347…）
+- 绿色包 size `93488370`、sha256 `8bfd03475cd25b7568a67b889baa421a70ebb21c82cca1be7ce88faf40a37e86`
+  （v1.01.013 已剔除服务端 AoRelay.exe 与 .pdb；安装版因 Gitee 仓库附件 1GB 配额满暂未上 Gitee，
+  待配额清理后补传——自动更新只依赖绿色包 latest.json，不受影响）
 - Gitee 当前 Release id 见 `verify` 输出；历史 v1.01.003–009 在 Codeberg。
