@@ -254,35 +254,45 @@ jobs:
             echo "  ok $f ($(stat -c%s "$f") B)"
           done
 
-          # 1) 查是否已有该 tag 的 Release；无则创建
+          # 1) 查是否已有该 tag 的 Release；无则创建（创建失败回显原始返回体便于定位）
           RID=$(H "${API}/releases/tags/${VER}" 2>/dev/null | python -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
           if [ -z "$RID" ]; then
             echo "Creating Release $VER ..."
             RID=$(H -d "{\"tag_name\":\"${VER}\",\"name\":\"PipPrinter ${VER}\",\"target_commitish\":\"master\",\"draft\":false,\"prerelease\":false}" \
-              "${API}/releases" | python -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
-            [ -n "$RID" ] || { echo "ERROR: 创建 Release 失败"; exit 1; }
+              "${API}/releases" 2>/dev/null | python -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+            if [ -z "$RID" ]; then
+              echo "ERROR: 创建 Release 失败，原始返回:"
+              H -d "{\"tag_name\":\"${VER}\",\"name\":\"PipPrinter ${VER}\",\"target_commitish\":\"master\",\"draft\":false,\"prerelease\":false}" \
+                "${API}/releases" 2>&1 | head -c400
+              echo; exit 1
+            fi
           else
             echo "Reusing Release id=${RID}"
           fi
 
-          # 2) 逐件上传（curl PUT 二进制，--max-time 给足 90MB 余量）
+          # 2) 逐件上传（GitHub 资产上传标准：PUT upload_url；--http1.1 避 HTTP/2 大 body 坑，
+          #    重试 3 次抗网络抖动，回显 HTTP 码便于定位）
           up() {  # up <local> <name>
-            local lf="$1" nm="$2"
-            echo "Uploading ${nm} ..."
-            curl -sS -L --max-time 600 \
-              -H "Authorization: ${TOKEN}" \
-              -H "Content-Type: application/octet-stream" \
-              -X POST \
-              -H "name: ${nm}" \
-              --data-binary @"$lf" \
-              "${API}/releases/${RID}/assets" > /dev/null
-            # 回查资产是否在册（grep 资产名，避免内联 Python f-string 触发 YAML 解析）
-            if curl -sS -H "$AUTH" -H "Accept: application/vnd.github+json" "${API}/releases/${RID}/assets" \
-                | grep -q "\"${nm}\""; then
-              echo "  asset ok ${nm}"
-            else
-              echo "ERROR: ${nm} 未在 Release ${RID} 资产中，上传失败"; exit 1
-            fi
+            local lf="$1" nm="$2" attempt code
+            echo "Uploading ${nm} ($(stat -c%s "$lf") B) ..."
+            for attempt in 1 2 3; do
+              code=$(curl -sS -L --http1.1 --max-time 600 \
+                -H "Authorization: token ${TOKEN}" \
+                -H "Content-Type: application/octet-stream" \
+                -X POST \
+                -H "name: ${nm}" \
+                -H "Accept: application/vnd.github+json" \
+                -o /tmp/up_res.json -w "%{http_code}" \
+                --data-binary @"$lf" \
+                "${API}/releases/${RID}/assets" 2>/tmp/up_err.txt)
+              if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
+                echo "  asset ok ${nm} (HTTP ${code}, attempt ${attempt})"
+                return 0
+              fi
+              echo "  upload ${nm} HTTP ${code} attempt ${attempt}; err=$(cat /tmp/up_err.txt | head -c200)"
+              sleep 5
+            done
+            echo "ERROR: ${nm} 上传 3 次均失败"; cat /tmp/up_res.json 2>/dev/null | head -c300; exit 1
           }
           up "$EXE" "PipPrinter-Setup-${VER}.exe"
           up "$ZIP" "PipPrinter-win-x64-${VER_NOV}.zip"
