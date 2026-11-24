@@ -108,7 +108,11 @@ jobs:
         # 用 gh CLI 上传（自动 multipart 分片 + 重试，90MB 不会超时）
         run: |
           VER=${{ github.ref_name }}
-          VER_NOV=${{ github.ref_name }}
+          # github.ref_name = "v1.01.014"（带 v）；release.py 产物文件名：
+          #   绿色包: out/PipPrinter-win-x64-1.01.014.zip  （无 v）
+          #   安装版: out/PipPrinter-Setup-v1.01.014.exe   （带 v）
+          #   清单:   out/1.01.014.json                    （无 v）
+          VER_NOV=$(echo "$VER" | sed 's/^v//')
           ZIP="out/PipPrinter-win-x64-${VER_NOV}.zip"
           EXE="out/PipPrinter-Setup-${VER}.exe"
           MAN="out/${VER_NOV}.json"
