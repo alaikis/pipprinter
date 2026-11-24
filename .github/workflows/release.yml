@@ -43,10 +43,17 @@ jobs:
         # release.py 硬编码 C:\Program Files (x86)\NSIS\Bin\makensis.exe
         # GitHub Actions Windows 镜像默认无 NSIS，需 choco 安装
         run: |
-          choco install -y nsis --no-progress
-          echo "NSIS installed:"
-          & "C:\Program Files (x86)\NSIS\Bin\makensis.exe" /VERSION 2>&1 | Out-Null || echo "makensis not in PATH, checking direct path..."
-          Test-Path "C:\Program Files (x86)\NSIS\Bin\makensis.exe"
+          # choco 在 C:\ProgramData\chocolatey\bin\choco.exe
+          & "C:\ProgramData\chocolatey\bin\choco.exe" install -y nsis --no-progress
+          $nsis = "C:\Program Files (x86)\NSIS\Bin\makensis.exe"
+          if (Test-Path $nsis) {
+            Write-Host "NSIS OK: $nsis"
+            & $nsis /VERSION
+          } else {
+            Write-Host "ERROR: NSIS not found at expected path"
+            Get-ChildItem -Path "C:\Program Files (x86)\NSIS" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 5 FullName
+            exit 1
+          }
         shell: powershell
 
       - name: Install Python
