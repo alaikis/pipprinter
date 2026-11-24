@@ -107,28 +107,24 @@ jobs:
         id: gh_release
         # 用 gh CLI 上传（自动 multipart 分片 + 重试，90MB 不会超时）
         run: |
-          VER=v${{ github.ref_name }}
-          # github.ref_name 已是 v1.01.014（带 v）；release.py 产物文件名用 lstrip(v) 后的 1.01.014
-          # 绿色包: out/PipPrinter-win-x64-1.01.014.zip（无 v）
-          # 安装版: out/PipPrinter-Setup-v1.01.014.exe（带 v）
-          # 清单:   out/1.01.014.json（无 v）
+          VER=${{ github.ref_name }}
           VER_NOV=${{ github.ref_name }}
           ZIP="out/PipPrinter-win-x64-${VER_NOV}.zip"
           EXE="out/PipPrinter-Setup-${VER}.exe"
           MAN="out/${VER_NOV}.json"
           REPO="alaikis/pipprinter"
-          # choco 安装后 gh 在 C:\ProgramData\chocolatey\bin\，需加入 PATH
-          export PATH="$PATH:/c/ProgramData/chocolatey/bin"
+          # choco 安装 gh 后全路径
+          GH="/c/ProgramData/chocolatey/bin/gh.exe"
 
           echo "=== Files to upload ==="
           ls -la out/
-          which gh || echo "gh not found in PATH"
-          gh --version 2>/dev/null || echo "gh version check failed"
+          echo "gh path: $GH"
+          $GH --version 2>&1 || echo "gh version failed"
 
           # 若 Release 不存在则创建；已存在则直接 upload
-          if ! gh release view "$VER" -R "$REPO" --json id >/dev/null 2>&1; then
+          if ! $GH release view "$VER" -R "$REPO" --json id >/dev/null 2>&1; then
             echo "Creating Release $VER ..."
-            gh release create "$VER" \
+            $GH release create "$VER" \
               --title "PipPrinter ${VER} (win-x64)" \
               --notes "PipPrinter ${VER} — Windows x64" \
               -R "$REPO"
@@ -138,11 +134,11 @@ jobs:
 
           # 逐件上传（gh 自动 multipart 分片，大文件不会超时）
           echo "Uploading $ZIP ..."
-          gh release upload "$VER" "$ZIP" -R "$REPO" --clobber
+          $GH release upload "$VER" "$ZIP" -R "$REPO" --clobber
           echo "Uploading $EXE ..."
-          gh release upload "$VER" "$EXE" -R "$REPO" --clobber
+          $GH release upload "$VER" "$EXE" -R "$REPO" --clobber
           echo "Uploading $MAN as latest.json ..."
-          gh release upload "$VER" "$MAN" -R "$REPO" --clobber --filename latest.json
+          $GH release upload "$VER" "$MAN" -R "$REPO" --clobber --filename latest.json
 
           echo "=== GitHub Release complete ==="
         env:
