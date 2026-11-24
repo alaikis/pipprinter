@@ -279,11 +279,12 @@ jobs:
             local lf="$1" nm="$2" attempt code up_url
             echo "Uploading ${nm} ($(stat -c%s "$lf") B) ..."
             for attempt in 1 2 3; do
+              # GitHub 资产上传返回 302 + Location 头(首字母大写 L)，须按 "Location:" 匹配
               up_url=$(curl -sS -X POST -H "$AUTH" -H "Accept: application/octet-stream" \
                 -H "Content-Type: application/octet-stream" \
                 --data-binary @"$lf" -D - -o /dev/null \
                 "${API}/releases/${RID}/assets?name=${nm}" 2>/dev/null \
-                | tr -d '\r' | sed -n 's/^location: //Ip')
+                | tr -d '\r' | grep -i '^Location:' | sed 's/^[Ll]ocation: //' | tr -d ' ')
               if [ -n "$up_url" ]; then
                 code=$(curl -sS -L --http1.1 --max-time 600 \
                   -H "Authorization: token ${TOKEN}" \
