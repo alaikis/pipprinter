@@ -120,7 +120,6 @@ jobs:
             RID=$EXISTING_ID
             echo "Reusing existing Release id=$RID"
           else
-            # 创建新 Release（无附件）
             MANIFEST_BODY=$(python -c "
             import json
             ver = '${VER}'
@@ -144,25 +143,7 @@ jobs:
             echo "Release created: id=$RID"
           fi
 
-          # 2. 删除旧附件（重发版时清理）
-          curl -sS -H "Authorization: token ${GITHUB_TOKEN}" \
-            "https://api.github.com/repos/${REPO}/releases/${RID}" | \
-          python -c "
-          import sys, json, urllib.request, os
-          d = json.load(sys.stdin)
-          tok = os.environ.get('GITHUB_TOKEN','')
-          rid = d.get('id')
-          base = f'https://api.github.com/repos/alaikis/pipprinter/releases/{rid}/assets'
-          for a in d.get('assets', []):
-              aid, name = a.get('id'), a.get('name','')
-              if name in ('PipPrinter-win-x64-${VER}.zip', 'PipPrinter-Setup-${VER}.exe', '${VER}.json', 'latest.json'):
-                  print(f'Deleting old asset: {name} (id={aid})')
-                  req = urllib.request.Request(f'{base}/{aid}', method='DELETE')
-                  req.add_header('Authorization', f'token {tok}')
-                  urllib.request.urlopen(req)
-          "
-
-          # 3. 逐件上传（GitHub Release 资产上传端点，单文件 2GB 上限）
+          # 2. 逐件上传（GitHub 自动覆盖同名资产，无需手动删除）
           for f in "$ZIP" "$EXE" "$MAN"; do
             FNAME=$(basename "$f")
             echo "Uploading $FNAME ..."
