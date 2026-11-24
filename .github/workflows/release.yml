@@ -112,9 +112,13 @@ jobs:
           EXE="out/PipPrinter-Setup-${VER}.exe"
           MAN="out/${VER}.json"
           REPO="alaikis/pipprinter"
+          # choco 安装后 gh 在 C:\ProgramData\chocolatey\bin\，需加入 PATH
+          export PATH="$PATH:/c/ProgramData/chocolatey/bin"
 
           echo "=== Files to upload ==="
           ls -la out/
+          which gh || echo "gh not found"
+          gh --version
 
           # 若 Release 不存在则创建；已存在则直接 upload
           if ! gh release view "$VER" -R "$REPO" --json id >/dev/null 2>&1; then
