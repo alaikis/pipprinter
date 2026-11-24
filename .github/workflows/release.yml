@@ -1,7 +1,7 @@
-# PipPrinter 发版：build → e2e 门禁 → GitHub Release（大文件镜像）→ 可选补传 Gitee 最小时集。
+# PipPrinter 发版：build → e2e 门禁 → GitHub Release（大文件）→ 可选补传 Gitee 最小时集。
 #
 # 为什么在 GitHub 上发版：
-#   * GitHub Release 资产无「1GB 附件总配额」这类限制（单 Release 2GB、账户无总附件上限），
+#   * GitHub Release 资产无「1GB 附件总配额」限制（单 Release 2GB、账户无总附件上限），
 #     根治 Gitee 社区版 1GB 附件配额反复爆满的问题。
 #   * 但客户端自动更新清单依赖 Gitee /releases/latest，所以 Gitee 仍保留「绿色包 + latest.json」
 #     两条最小时集（~90MB，远低于配额）；本 workflow 在设了 GITEE_TOKEN 时自动补传这两件。
@@ -23,16 +23,46 @@ permissions:
 jobs:
   build-and-release:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install .NET 10 SDK
-        run: choco install -y dotnet-sdk-10.0 || dotnet --version
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+        # GitHub Actions Windows 镜像已预装 .NET 8/9；.NET 10 通过 setup-dotnet 安装。
+        # 若 10.0.x 尚未发布，可改为 '10.0'（自动匹配最新）或 choco 兜底。
 
-      - name: Install NSIS (to the path release.py expects)
-        run: choco install -y nsis
-        # release.py 硬编码 C:\Program Files (x86)\NSIS\Bin\makensis.exe，choco 默认装这里
+      - name: Verify .NET
+        run: dotnet --version
+        shell: powershell
+
+      - name: Install NSIS
+        # release.py 硬编码 C:\Program Files (x86)\NSIS\Bin\makensis.exe
+        # GitHub Actions Windows 镜像默认无 NSIS，需 choco 安装
+        run: |
+          choco install -y nsis --no-progress
+          echo "NSIS installed:"
+          & "C:\Program Files (x86)\NSIS\Bin\makensis.exe" /VERSION 2>&1 | Out-Null || echo "makensis not in PATH, checking direct path..."
+          Test-Path "C:\Program Files (x86)\NSIS\Bin\makensis.exe"
+        shell: powershell
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Verify tools
+        run: |
+          echo "=== Tools check ==="
+          dotnet --version
+          python --version
+          curl --version 2>$null | Select-Object -First 1
+          echo "NSIS:"
+          Test-Path "C:\Program Files (x86)\NSIS\Bin\makensis.exe"
+        shell: powershell
 
       - name: Sync version files to tag
         # tag 已含版本号；若源码 Brand.cs 与 tag 不一致，bump 对齐（CI 幂等）
@@ -42,28 +72,72 @@ jobs:
       - name: Build (portable + installer + manifest)
         run: python scripts/release.py build ${{ github.ref_name }}
         # 绿色包 ~90MB、安装版 ~65MB、latest.json
+        # 产物在 out/ 目录：
+        #   out/PipPrinter-win-x64-<ver>.zip      （绿色包）
+        #   out/PipPrinter-Setup-<ver>.exe        （安装版）
+        #   out/<ver>.json                        （latest.json 清单）
+        shell: bash
 
       - name: e2e smoke (gate — 不过则阻断发布)
         run: python scripts/release.py e2e ${{ github.ref_name }} --wait 90
         # 起绿色包主程序 @127.0.0.1，打 /health、/api/printers(source)、/api/command 等，
         # 校验 Result.code 与 013 根治契约。FAIL 即退出码 1，后续步骤不执行。
+        shell: bash
 
       - name: Publish to GitHub Release (large-file mirror)
-        id: gh
+        id: gh_release
+        # 创建 GitHub Release + 上传三件套。用 REST API 而非 gh CLI（gh 在大文件上传上不稳定）。
         run: |
-          set -e
           VER=${{ github.ref_name }}
-          ZIP=out/PipPrinter-win-x64-${VER}.zip
-          EXE=out/PipPrinter-Setup-${VER}.exe
-          MAN=out/${VER}.json
-          gh release create "$VER" \
-            --title "PipPrinter $VER (win-x64)" \
-            --notes "$(cat "$MAN")" \
-            --files "$ZIP" \
-            -R alaikis/pipprinter || true
-          # 附件较大时 gh create 可能失败；用 upload 兜底逐件传
-          gh release upload "$VER" "$EXE" --clobber -R alaikis/pipprinter || true
-          gh release upload "$VER" "$MAN" --clobber -R alaikis/pipprinter || true
+          REPO=alaikis/pipprinter
+          ZIP="out/PipPrinter-win-x64-${VER}.zip"
+          EXE="out/PipPrinter-Setup-${VER}.exe"
+          MAN="out/${VER}.json"
+
+          echo "=== Files to upload ==="
+          ls -la out/*.zip out/*.exe out/*.json 2>/dev/null || dir out
+
+          # 1. 创建 Release（无附件）
+          MANIFEST_BODY=$(python -c "
+          import json, sys
+          ver = '${VER}'
+          print(json.dumps({
+              'tag_name': ver,
+              'name': f'PipPrinter {ver} (win-x64)',
+              'draft': False,
+              'prerelease': False
+          }))")
+          echo "Creating Release $VER ..."
+          RESP=$(curl -sS -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$MANIFEST_BODY" \
+            "https://api.github.com/repos/${REPO}/releases")
+          RID=$(echo "$RESP" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+          if [ -z "$RID" ]; then
+            echo "Release create failed: $RESP"
+            exit 1
+          fi
+          echo "Release created: id=$RID"
+
+          # 2. 逐件上传（GitHub Release 资产上传端点，单文件 2GB 上限）
+          for f in "$ZIP" "$EXE" "$MAN"; do
+            FNAME=$(basename "$f")
+            echo "Uploading $FNAME ..."
+            UPLOAD_RESP=$(curl -sS -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@${f}" \
+              "https://uploads.github.com/repos/${REPO}/releases/${RID}/assets?name=${FNAME}")
+            UPLOAD_ID=$(echo "$UPLOAD_RESP" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+            if [ -z "$UPLOAD_ID" ]; then
+              echo "Upload failed for $FNAME: $UPLOAD_RESP"
+              exit 1
+            fi
+            echo "Uploaded $FNAME: id=$UPLOAD_ID"
+          done
+
+          echo "=== GitHub Release complete ==="
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -72,56 +146,100 @@ jobs:
         # 自动更新依赖 Gitee /releases/latest，只保留绿色包 + latest.json（~90MB，配额充裕）。
         # Gitee 不存安装版（安装版由 GitHub Release 承载），历史包走 Codeberg 镜像。
         run: |
-          if [ -z "${GITEE_TOKEN:-}" ]; then echo "GITEE_TOKEN 未设置，跳过 Gitee 最小时集"; exit 0; fi
-          python - <<'PY'
-          import os, json, subprocess, re
-          from pathlib import Path
+          if [ -z "${GITEE_TOKEN:-}" ]; then
+            echo "GITEE_TOKEN 未设置，跳过 Gitee 最小时集"
+            exit 0
+          fi
+          python - <<'PYEOF'
+          import os, json, subprocess, sys
           TOK = os.environ["GITEE_TOKEN"]
           VER = "${{ github.ref_name }}"
           API = "https://gitee.com/api/v5/repos/alaikiscom/pipprinter"
-          C = r"C:\Windows\system32\curl.exe"
-          H = ["-H", "Authorization: Bearer " + TOK]
+          C = "curl"  # GitHub Actions Windows 镜像自带 curl
+          H = ["-H", f"Authorization: Bearer {TOK}"]
+
           def get(url):
-              out = subprocess.run([C,"-sS","-L","--max-time","60",*H,url],capture_output=True,text=True).stdout
-              return json.loads(out)
-          def post_asset(rid, path, filename):
+              out = subprocess.run([C,"-sS","-L","--max-time","60",*H,url],
+                                   capture_output=True, text=True, encoding="utf-8").stdout
+              try:
+                  return json.loads(out)
+              except:
+                  print(f"GET failed: {url} => {out[:200]}")
+                  return None
+
+          def post_asset(rid, path, filename=None):
               spec = f"file=@{path}" + (f";filename={filename}" if filename else "")
-              out = subprocess.run([C,"-sS","-L","--max-time","300",*H,"-X","POST","-F",spec,
-                                     f"{API}/releases/{rid}/attach_files"],capture_output=True,text=True)
-              return json.loads(out or "{}")
+              out = subprocess.run([C,"-sS","-L","--max-time","300",*H,"-X","POST",
+                                    "-F", spec, f"{API}/releases/{rid}/attach_files"],
+                                   capture_output=True, text=True, encoding="utf-8").stdout
+              try:
+                  return json.loads(out or "{}")
+              except:
+                  print(f"POST asset failed: {out[:200]}")
+                  return {}
+
           rel = get(f"{API}/releases?per_page=100")
-          rid = next((r["id"] for r in rel if r.get("tag_name")==f"v{VER}"), None)
+          if not rel:
+              print("Gitee /releases 拉取失败")
+              sys.exit(1)
+          rid = next((r["id"] for r in rel if r.get("tag_name") == VER), None)
           if rid is None:
-              body = json.dumps({"tag_name":f"v{VER}","name":f"v{VER}","target_commitish":"master","prerelease":False})
-              created = json.loads(subprocess.run([C,"-sS","-L","--max-time","60",*H,"-X","POST",
-                                                   "-H","Content-Type: application/json","-d",body,f"{API}/releases"],
-                                                  capture_output=True,text=True).stdout)
-              rid = created["id"]
+              body = json.dumps({"tag_name": VER, "name": VER,
+                                 "target_commitish": "master", "prerelease": False})
+              created = get(f"{API}/releases")  # 用 POST
+              # 创建新 Release
+              out = subprocess.run([C,"-sS","-L","--max-time","60",*H,"-X","POST",
+                                    "-H","Content-Type: application/json",
+                                    "-d", body, f"{API}/releases"],
+                                   capture_output=True, text=True, encoding="utf-8").stdout
+              created = json.loads(out or "{}")
+              rid = created.get("id")
+              if not rid:
+                  print(f"Gitee Release 创建失败: {out[:200]}")
+                  sys.exit(1)
               print(f"Gitee 创建 release id={rid}")
-          # 删同名旧附件（兜底缺 id）
-          for a in get(f"{API}/releases/{rid}/attach_files"):
+
+          # 删同名旧附件（避免配额浪费）
+          for a in (get(f"{API}/releases/{rid}/attach_files") or []):
               aid, name = a.get("id"), a.get("name")
-              if aid and name in {"PipPrinter-win-x64-"+VER+".zip", "latest.json"}:
+              if aid and name in {"PipPrinter-win-x64-" + VER + ".zip", "latest.json"}:
                   subprocess.run([C,"-sS","-L","--max-time","60",*H,"-X","DELETE",
-                                   f"{API}/releases/{rid}/attach_files/{aid}"],capture_output=True)
+                                   f"{API}/releases/{rid}/attach_files/{aid}"],
+                                 capture_output=True)
+
           p = post_asset(rid, f"out/PipPrinter-win-x64-{VER}.zip", None)
           print("绿色包:", p.get("id"), p.get("size"))
           m = post_asset(rid, f"out/{VER}.json", "latest.json")
           print("latest.json:", m.get("id"), m.get("size"))
-          PY
+          PYEOF
         shell: bash
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
 
       - name: 复验（GitHub Release + Gitee latest）
         run: |
+          VER=${{ github.ref_name }}
+          REPO=alaikis/pipprinter
           echo "=== GitHub Release 资产 ==="
-          gh release view "${{ github.ref_name }}" -R alaikis/pipprinter --json tagName,assets 2>/dev/null || true
+          curl -sS \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${REPO}/releases/tags/${VER}" \
+            | python -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          print('tag:', d.get('tag_name'))
+          for a in d.get('assets', []):
+              print('  ', a.get('name'), a.get('size'), 'bytes')
+          "
           if [ -n "${GITEE_TOKEN:-}" ]; then
             echo "=== Gitee /releases/latest ==="
             curl -sSL --max-time 30 -H "Authorization: Bearer ${GITEE_TOKEN}" \
               "https://gitee.com/api/v5/repos/alaikiscom/pipprinter/releases/latest" \
-              | python -c "import sys,json;d=json.load(sys.stdin);print('tag=',d.get('tag_name'),'assets=',[a.get('name') for a in d.get('assets',[])])"
+              | python -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          print('tag=', d.get('tag_name'), 'assets=', [a.get('name') for a in d.get('assets', [])])
+          "
           else
             echo "（Gitee 复验跳过：未设 GITEE_TOKEN）"
           fi
