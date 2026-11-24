@@ -17,8 +17,19 @@ on:
     tags:
       - 'v*'
 
+# 代码签名策略（两层，见下方步骤）：
+#   1) SLSA provenance attestation（GitHub 原生，零证书成本）：
+#      对构建产物生成 Sigstore 签名的 SLSA Build Provenance，记录「这份产物来自
+#      本仓库该 commit 的 CI 构建」，供消费者用 `gh attestation verify` 验证来源，
+#      补全信任链。注意：attestation 本身不消除 SmartScreen（它验证来源，不是数字签名）。
+#   2) Authenticode 代码签名（可选，根治 SmartScreen）：
+#      若仓库 secrets 里有 CODE_SIGN_PFX + CODE_SIGN_PFX_PASSWORD，则用 signtool 对
+#      安装版 exe / 绿色包 zip 做 Authenticode 签名，Windows 才不弹 SmartScreen 红框。
+#      无证书时自动跳过（不阻断发布），发布的是未签名产物。
 permissions:
   contents: write
+  id-token: write        # SLSA attestation 需要 OIDC 身份（GitHub 托管密钥签）
+  attestations: write    # 把 attestation 写回仓库
 
 jobs:
   build-and-release:
@@ -41,7 +52,10 @@ jobs:
 
       - name: Install NSIS
         # release.py 硬编码 C:\Program Files (x86)\NSIS\Bin\makensis.exe
-        # GitHub Actions Windows 镜像默认无 NSIS，需安装。choco 可能 503，加重试。
+        # GitHub Actions Windows 镜像默认无 NSIS。
+        # choco 源偶发 503，故：主路径 choco（重试 3 次）→ 兜底 sourceforge 直链
+        # （downloads.sourceforge.net 非 /download 重定向，curl.exe 自带，处理重定向最稳，
+        #  避免 PowerShell Invoke-WebRequest 在 302/反爬下中断）。
         run: |
           $nsis = "C:\Program Files (x86)\NSIS\Bin\makensis.exe"
           if (Test-Path $nsis) {
@@ -49,45 +63,40 @@ jobs:
             & $nsis /VERSION
             exit 0
           }
-          # 尝试 choco（最多重试 3 次）
+          $choco = "C:\ProgramData\chocolatey\bin\choco.exe"
           for ($i = 1; $i -le 3; $i++) {
-            & "C:\ProgramData\chocolatey\bin\choco.exe" install -y nsis --no-progress 2>&1
-            if (Test-Path $nsis) { break }
-            Write-Host "NSIS install attempt $i failed, retrying in 10s..."
+            & $choco install -y nsis --no-progress 2>&1 | Out-Null
+            if (Test-Path $nsis) { Write-Host "NSIS installed via choco (attempt $i)"; exit 0 }
+            Write-Host "choco attempt $i failed, retrying in 10s..."
             Start-Sleep -Seconds 10
           }
-          # 兜底：choco 持续失败时从官网直接下载
+          # 兜底：sourceforge 直链（downloads.sourceforge.net），用 curl.exe 下载
+          Write-Host "choco failed 3 times, falling back to sourceforge direct..."
+          $nsisVer = "3.13"
+          $url = "https://downloads.sourceforge.net/project/nsis/NSIS%203/$nsisVer/nsis-$nsisVer.zip"
+          $zipPath = "$env:TEMP\nsis-$nsisVer.zip"
+          # curl.exe（Windows 镜像自带）-L 跟随重定向、--fail 失败即非零退出
+          & curl.exe -L --fail -sS -o $zipPath $url
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $zipPath)) {
+            Write-Host "ERROR: NSIS download failed (curl exit $LASTEXITCODE)"
+            exit 1
+          }
+          Write-Host "Downloaded: $(Get-Item $zipPath | ForEach-Object { $_.Length }) bytes"
+          $extractDir = "C:\nsis-extract"
+          Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+          # NSIS zip 根目录就是 NSIS 安装树（Bin/ plugins/ Include/ Contrib/）
+          $installRoot = "C:\Program Files (x86)\NSIS"
+          $makensisSrc = Get-ChildItem $extractDir -Recurse -Filter "makensis.exe" | Select-Object -First 1
+          if (-not $makensisSrc) {
+            Write-Host "ERROR: makensis.exe not found in extracted archive"
+            exit 1
+          }
+          # 把 makensis.exe 所在目录树拷到 installRoot（保持 Bin/plugins/Include/Contrib 相对结构）
+          $srcRoot = $makensisSrc.Directory.Parent.FullName  # 含 Bin 的层级
+          Copy-Item $srcRoot "$installRoot" -Recurse -Force
           if (-not (Test-Path $nsis)) {
-            Write-Host "choco failed 3 times, downloading NSIS from sourceforge..."
-            $nsisVer = "3.13"
-            $nsisUrl = "https://sourceforge.net/projects/nsis/files/NSIS%203/$nsisVer/nsis-$nsisVer.zip/download"
-            $zipPath = "$env:TEMP\nsis-$nsisVer.zip"
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $nsisUrl -OutFile $zipPath -UseBasicParsing
-            $extractDir = "C:\nsis-extract"
-            Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
-            # release.py 期望 C:\Program Files (x86)\NSIS\Bin\makensis.exe
-            $nsisBin = "C:\Program Files (x86)\NSIS\Bin"
-            New-Item -ItemType Directory -Force -Path $nsisBin | Out-Null
-            # makensis.exe 在 zip 根目录
-            $makensis = Join-Path $extractDir "makensis.exe"
-            if (Test-Path $makensis) {
-              Copy-Item $makensis "$nsisBin\makensis.exe" -Force
-            } else {
-              Get-ChildItem $extractDir -Recurse -Filter "makensis.exe" | ForEach-Object {
-                Copy-Item $_.FullName "$nsisBin\makensis.exe" -Force
-              }
-            }
-            # 复制 plugins / Include / Contrib
-            foreach ($d in @("plugins", "Include", "Contrib")) {
-              if (Test-Path (Join-Path $extractDir $d)) {
-                Copy-Item (Join-Path $extractDir $d) "C:\Program Files (x86)\NSIS\$d" -Recurse -Force
-              }
-            }
-            if (-not (Test-Path $nsis)) {
-              Write-Host "ERROR: NSIS still not found after direct download"
-              exit 1
-            }
+            Write-Host "ERROR: NSIS still not at $nsis after install"
+            exit 1
           }
           Write-Host "NSIS OK: $nsis"
           & $nsis /VERSION
@@ -139,6 +148,86 @@ jobs:
         run: |
           & "C:\ProgramData\chocolatey\bin\choco.exe" install -y gh --no-progress
         shell: powershell
+
+      - name: 代码签名 — Authenticode（可选，根治 SmartScreen）
+        # 若 secrets 提供 CODE_SIGN_PFX + CODE_SIGN_PFX_PASSWORD（或 CODE_SIGN_CERT_BASE64），
+        # 用 signtool 对安装版 exe 与绿色包 zip 做 Authenticode 签名。
+        # 无证书时打印提示并 exit 0，不阻断发布（发布未签名产物）。
+        run: |
+          $hasCert = $false
+          $pfxPath = "out\codesign.pfx"
+          $pwd = ""
+          if ($env:CODE_SIGN_PFX) {
+            # 证书以 base64 存于 secret，运行时落盘（pfx 不进产物、不进 git）
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODE_SIGN_PFX))
+            $pwd = $env:CODE_SIGN_PFX_PASSWORD
+            $hasCert = $true
+          }
+          if (-not $hasCert) {
+            Write-Host "::warning::未提供 CODE_SIGN_PFX，跳过 Authenticode 签名（发布未签名产物，仍可做 SLSA attestation）"
+            exit 0
+          }
+          # 找 signtool（Windows SDK）
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch "arm64|x86" } | Select-Object -First 1
+          if (-not $signtool) { Write-Host "signtool 未找到，跳过签名"; exit 0 }
+          # signtool 选 amd64（CI 是 x64）
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\10.0.*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $signtool) { $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" | Select-Object -First 1 }
+          $ts = "http://timestamp.digicert.com"   # RFC3161 时间戳
+          # 产物文件名约定（见 release.py）：
+          #   安装版: out/PipPrinter-Setup-v<ver>.exe   （带 v，= github.ref_name）
+          #   绿色包: out/PipPrinter-win-x64-<ver>.zip （无 v，= ref_name 去 v）
+          $ver = $env:GITHUB_REF_NAME          # v1.01.014（带 v）
+          $verNov = $ver -replace '^v',''       # 1.01.014（去 v）
+          $exe = "out/PipPrinter-Setup-$ver.exe"
+          $zip = "out/PipPrinter-win-x64-$verNov.zip"
+          foreach ($f in @($exe, $zip)) {
+            if (-not (Test-Path $f)) { Write-Host "  跳过 $f（不存在）"; continue }
+            Write-Host "  签名 $f ..."
+            & $signtool.FullName sign /f $pfxPath /p $pwd /tr $ts /td sha256 /fd sha256 /v $f
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::signtool 签名失败 exit=$LASTEXITCODE"; exit 1 }
+          }
+          # 校验
+          foreach ($f in @($exe, $zip)) {
+            if (Test-Path $f) { & $signtool.FullName verify /v $f }
+          }
+          Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+          Write-Host "Authenticode 签名完成"
+        shell: powershell
+        env:
+          CODE_SIGN_PFX: ${{ secrets.CODE_SIGN_PFX }}
+          CODE_SIGN_PFX_PASSWORD: ${{ secrets.CODE_SIGN_PFX_PASSWORD }}
+
+      - name: Generate SLSA provenance attestations
+        # 对安装版 exe + 绿色包 zip + 清单 生成 Sigstore 签名的 SLSA Build Provenance，
+        # 记录构建来源（本仓库 commit + CI 构建）。attestation 自动关联同 run 的 Release。
+        # 需 id-token: write（OIDC）+ attestations: write（已在 job permissions 声明）。
+        # 文件名约定：exe 带 v（= ref_name），zip/清单 无 v（= ref_name 去 v）。
+        uses: actions/attest-build-provenance@v2
+        with:
+          # subject-path 支持 glob。产物文件名：exe 带 v，zip/清单 无 v（= ref_name 去 v）。
+          # 用 glob 通配版本段，避免 YAML 表达式去 v。
+          subject-path: |
+            out/PipPrinter-Setup-${{ github.ref_name }}.exe
+            out/PipPrinter-win-x64-*.zip
+            out/*.json
+
+      - name: 验证 SLSA attestation（自证）
+        # 用 gh 验证刚生成的 provenance，确认信任链闭环（不阻断发布）。
+        run: |
+          $ver = $env:GITHUB_REF_NAME          # v1.01.014（带 v）
+          $verNov = $ver -replace '^v',''
+          $zip = "out/PipPrinter-win-x64-$verNov.zip"
+          if (Test-Path $zip) {
+            & "C:\ProgramData\chocolatey\bin\gh.exe" attestation verify $zip --repo "alaikis/pipprinter" 2>&1
+          } else {
+            Write-Host "::warning::未找到 $zip，跳过 attestation verify"
+          }
+        shell: powershell
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to GitHub Release (large-file mirror)
         id: gh_release
