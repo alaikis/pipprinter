@@ -145,19 +145,25 @@ jobs:
         # e2e 失败不阻断后续发布步骤（CI 环境限制），但日志会保留供诊断。
 
       - name: Install gh CLI
-        # 直接下 GitHub 官方 gh 二进制到固定路径（choco 装 gh 落点不可靠，曾致 step14/15 找不到 gh.exe）
+        # choco 装 gh 实际落点 C:\Program Files\GitHub CLI\gh.exe（非 choco bin），探测多路径取存在者
         run: |
-          $ghVer = "2.40.0"   # 确定的官方 release 资产名 gh_2.40.0_windows_amd64.zip
-          $binDir = "C:\gh"
-          New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-          $zip = "C:\gh\gh-$ghVer-win.exe.zip"
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          Invoke-WebRequest -Uri "https://github.com/cli/cli/releases/download/v$ghVer/gh_$ghVer_windows_amd64.zip" -OutFile $zip -UseBasicParsing
-          Expand-Archive -Path $zip -DestinationPath $binDir -Force
-          # gh zip 解压结构: gh_2.40.0_windows_amd64/bin/gh.exe
-          $ghSrc = Get-ChildItem $binDir -Recurse -Filter "gh.exe" | Select-Object -First 1
-          if (-not $ghSrc) { throw "gh.exe 解压后未找到" }
-          Copy-Item $ghSrc.FullName "C:\gh\gh.exe" -Force
+          & "C:\ProgramData\chocolatey\bin\choco.exe" install -y gh --no-progress
+          $cands = @(
+            "C:\Program Files\GitHub CLI\gh.exe",
+            "C:\Program Files (x86)\GitHub CLI\gh.exe",
+            "C:\ProgramData\chocolatey\bin\gh.exe",
+            "$env:ChocolateyInstall\gh\tools\gh\gh.exe"
+          )
+          $found = $cands | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $found) {
+            $found = Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -Filter "gh.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $found = $found.FullName }
+          }
+          if (-not $found) { throw "gh.exe 安装后未找到" }
+          & $found --version
+          # 统一拷到固定路径 C:\gh\gh.exe 供后续步骤引用
+          New-Item -ItemType Directory -Force -Path "C:\gh" | Out-Null
+          Copy-Item $found "C:\gh\gh.exe" -Force
           & "C:\gh\gh.exe" --version
           Write-Host "GH_EXE=C:\gh\gh.exe"
         shell: powershell
