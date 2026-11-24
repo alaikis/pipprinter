@@ -18,7 +18,7 @@ using Newtonsoft.Json.Linq;
 
 namespace DuoAssistant.Services
 {
-    /// <summary>Gitee 自动更新清单条目（latest.json）。</summary>
+    /// <summary>自动更新清单条目（latest.json；主源 GitHub，Gitee 备份）。</summary>
     public class UpdateManifest
     {
         public string Version { get; set; }
@@ -30,10 +30,10 @@ namespace DuoAssistant.Services
     }
 
     /// <summary>
-    /// 自动更新服务：解析 Gitee 最新 Release → 拉取 latest.json → 版本比对 →
+    /// 自动更新服务：解析最新 Release（主源 GitHub / 备份 Gitee）→ 拉取 latest.json → 版本比对 →
     /// 下载 zip → SHA256 校验 → 旧 exe 改名让位、新 exe 就位（用户数据不动）→ 由调用方决定是否重启。
-    /// 注意：Gitee 不支持 GitHub 风格 /releases/latest/download/&lt;file&gt; 别名，
-    /// 清单地址需通过 API v5 解析最新 Release 的附件直链。
+    /// 主源 GitHub：/releases/latest 的 assets 与 Gitee 同为 browser_download_url，取法一致；
+    /// GitHub 无附件总量上限，作主仓库；Gitee 1GB 附件配额降为备份源。
     /// </summary>
     public sealed class UpdateService
     {
@@ -57,7 +57,9 @@ namespace DuoAssistant.Services
         /// <summary>
         /// 把配置的 UpdateManifestUrl 解析为 latest.json 的实际下载地址。
         /// - 以 .json 结尾：直接使用
-        /// - https://gitee.com/{owner}/{repo}/releases/latest（页地址）：
+        /// - https://github.com/{owner}/{repo}/releases（GitHub，主源，2026-11-24 起）：
+        ///   调 /repos/{owner}/{repo}/releases/latest，取 assets 里 latest.json 的 browser_download_url
+        /// - https://gitee.com/{owner}/{repo}/releases（Gitee，备份源）：
         ///   调 API v5 /repos/{owner}/{repo}/releases/latest，取 assets 里 latest.json 的 browser_download_url
         /// </summary>
         private static async Task<string> ResolveManifestUrlAsync(string configured, CancellationToken cancellationToken = default)
@@ -65,13 +67,29 @@ namespace DuoAssistant.Services
             if (configured.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                 return configured;
 
-            var m = Regex.Match(configured, @"gitee\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/releases",
+            // 主源：GitHub（/releases/latest 的 assets 与 Gitee 同为 browser_download_url，取法一致）
+            var gh = Regex.Match(configured, @"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/releases",
                 RegexOptions.IgnoreCase);
-            if (!m.Success)
-                return configured.TrimEnd('/') + "/download/latest.json";
+            if (gh.Success)
+                return await FetchLatestJsonUrlAsync(
+                    string.Format("https://api.github.com/repos/{0}/{1}/releases/latest",
+                        gh.Groups[1].Value, gh.Groups[2].Value), cancellationToken).ConfigureAwait(false);
 
-            var api = string.Format("https://gitee.com/api/v5/repos/{0}/{1}/releases/latest",
-                m.Groups[1].Value, m.Groups[2].Value);
+            // 备份源：Gitee
+            var gg = Regex.Match(configured, @"gitee\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/releases",
+                RegexOptions.IgnoreCase);
+            if (gg.Success)
+                return await FetchLatestJsonUrlAsync(
+                    string.Format("https://gitee.com/api/v5/repos/{0}/{1}/releases/latest",
+                        gg.Groups[1].Value, gg.Groups[2].Value), cancellationToken).ConfigureAwait(false);
+
+            // 未知托管：退化为 <url>/download/latest.json
+            return configured.TrimEnd('/') + "/download/latest.json";
+        }
+
+        /// <summary>调 latest-release API，取 assets 里名为 latest.json 的附件直链。</summary>
+        private static async Task<string> FetchLatestJsonUrlAsync(string api, CancellationToken cancellationToken)
+        {
             var json = await Http.GetStringAsync(api, cancellationToken).ConfigureAwait(false);
             var rel = JObject.Parse(json);
             var asset = (rel["assets"] as JArray)?
