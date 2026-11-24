@@ -285,8 +285,10 @@ jobs:
           # 2) 逐件上传（gh 自动 multipart 分片，大文件不会超时）
           $GH release upload "$VER" "$EXE" -R "$REPO" --clobber || { echo "::error::上传 $EXE 失败"; exit 1; }
           $GH release upload "$VER" "$ZIP" -R "$REPO" --clobber || { echo "::error::上传 $ZIP 失败"; exit 1; }
-          # --filename 须放在 --clobber 前(gh 新版 --clobber 可取 true|false, 会吞掉后置参数)
-          $GH release upload "$VER" "$MAN" -R "$REPO" --filename latest.json --clobber || { echo "::error::上传 latest.json 失败"; exit 1; }
+          # 清单上传为 latest.json：gh 2.x 无 --filename flag, 先 cp 成 latest.json 再传
+          cp "$MAN" "out/latest.json"
+          $GH release upload "$VER" "out/latest.json" -R "$REPO" --clobber || { echo "::error::上传 latest.json 失败"; exit 1; }
+          rm -f "out/latest.json"
 
           # 3) 回查资产
           echo "=== GitHub Release assets ==="
