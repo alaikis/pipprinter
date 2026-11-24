@@ -41,19 +41,56 @@ jobs:
 
       - name: Install NSIS
         # release.py 硬编码 C:\Program Files (x86)\NSIS\Bin\makensis.exe
-        # GitHub Actions Windows 镜像默认无 NSIS，需 choco 安装
+        # GitHub Actions Windows 镜像默认无 NSIS，需安装。choco 可能 503，加重试。
         run: |
-          # choco 在 C:\ProgramData\chocolatey\bin\choco.exe
-          & "C:\ProgramData\chocolatey\bin\choco.exe" install -y nsis --no-progress
           $nsis = "C:\Program Files (x86)\NSIS\Bin\makensis.exe"
           if (Test-Path $nsis) {
-            Write-Host "NSIS OK: $nsis"
+            Write-Host "NSIS already present: $nsis"
             & $nsis /VERSION
-          } else {
-            Write-Host "ERROR: NSIS not found at expected path"
-            Get-ChildItem -Path "C:\Program Files (x86)\NSIS" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 5 FullName
-            exit 1
+            exit 0
           }
+          # 尝试 choco（最多重试 3 次）
+          for ($i = 1; $i -le 3; $i++) {
+            & "C:\ProgramData\chocolatey\bin\choco.exe" install -y nsis --no-progress 2>&1
+            if (Test-Path $nsis) { break }
+            Write-Host "NSIS install attempt $i failed, retrying in 10s..."
+            Start-Sleep -Seconds 10
+          }
+          # 兜底：choco 持续失败时从官网直接下载
+          if (-not (Test-Path $nsis)) {
+            Write-Host "choco failed 3 times, downloading NSIS from sourceforge..."
+            $nsisVer = "3.13"
+            $nsisUrl = "https://sourceforge.net/projects/nsis/files/NSIS%203/$nsisVer/nsis-$nsisVer.zip/download"
+            $zipPath = "$env:TEMP\nsis-$nsisVer.zip"
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $nsisUrl -OutFile $zipPath -UseBasicParsing
+            $extractDir = "C:\nsis-extract"
+            Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+            # release.py 期望 C:\Program Files (x86)\NSIS\Bin\makensis.exe
+            $nsisBin = "C:\Program Files (x86)\NSIS\Bin"
+            New-Item -ItemType Directory -Force -Path $nsisBin | Out-Null
+            # makensis.exe 在 zip 根目录
+            $makensis = Join-Path $extractDir "makensis.exe"
+            if (Test-Path $makensis) {
+              Copy-Item $makensis "$nsisBin\makensis.exe" -Force
+            } else {
+              Get-ChildItem $extractDir -Recurse -Filter "makensis.exe" | ForEach-Object {
+                Copy-Item $_.FullName "$nsisBin\makensis.exe" -Force
+              }
+            }
+            # 复制 plugins / Include / Contrib
+            foreach ($d in @("plugins", "Include", "Contrib")) {
+              if (Test-Path (Join-Path $extractDir $d)) {
+                Copy-Item (Join-Path $extractDir $d) "C:\Program Files (x86)\NSIS\$d" -Recurse -Force
+              }
+            }
+            if (-not (Test-Path $nsis)) {
+              Write-Host "ERROR: NSIS still not found after direct download"
+              exit 1
+            }
+          }
+          Write-Host "NSIS OK: $nsis"
+          & $nsis /VERSION
         shell: powershell
 
       - name: Install Python
