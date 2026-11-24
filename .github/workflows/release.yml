@@ -231,48 +231,65 @@ jobs:
 
       - name: Publish to GitHub Release (large-file mirror)
         id: gh_release
-        # 用 gh CLI 上传（自动 multipart 分片 + 重试，90MB 不会超时）
+        # 用 REST API + curl 直传（不依赖 gh CLI 交互式登录，90MB 大文件稳定）：
+        #   1) 查/建 Release（POST /releases，按 tag_name 幂等）
+        #   2) 逐文件 PUT /releases/{id}/assets（GITHUB_TOKEN 鉴权）
+        # 文件命名（见 release.py）：exe 带 v（= ref_name），zip/清单 无 v（= ref_name 去 v）。
         run: |
-          VER=${{ github.ref_name }}
-          # github.ref_name = "v1.01.014"（带 v）；release.py 产物文件名：
-          #   绿色包: out/PipPrinter-win-x64-1.01.014.zip  （无 v）
-          #   安装版: out/PipPrinter-Setup-v1.01.014.exe   （带 v）
-          #   清单:   out/1.01.014.json                    （无 v）
-          VER_NOV=$(echo "$VER" | sed 's/^v//')
+          set -euo pipefail
+          VER=${{ github.ref_name }}                 # v1.01.014（带 v）
+          VER_NOV=$(echo "$VER" | sed 's/^v//')       # 1.01.014（无 v）
           ZIP="out/PipPrinter-win-x64-${VER_NOV}.zip"
           EXE="out/PipPrinter-Setup-${VER}.exe"
           MAN="out/${VER_NOV}.json"
           REPO="alaikis/pipprinter"
-          # choco 安装 gh 后全路径
-          GH="/c/ProgramData/chocolatey/bin/gh.exe"
+          API="https://api.github.com/repos/${REPO}"
+          TOKEN="${GITHUB_TOKEN}"
+          AUTH="Authorization: token ${TOKEN}"
+          H() { curl -sS -H "$AUTH" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" "$@"; }
 
-          echo "=== Files to upload ==="
-          ls -la out/
-          echo "gh path: $GH"
-          $GH --version 2>&1 || echo "gh version failed"
+          echo "=== Files to upload ==="; ls -la out/
+          for f in "$ZIP" "$EXE" "$MAN"; do
+            if [ ! -f "$f" ]; then echo "ERROR: 缺少产物 $f"; ls -la out/; exit 1; fi
+            echo "  ok $f ($(stat -c%s "$f") B)"
+          done
 
-          # 若 Release 不存在则创建；已存在则直接 upload
-          if ! $GH release view "$VER" -R "$REPO" --json id >/dev/null 2>&1; then
+          # 1) 查是否已有该 tag 的 Release；无则创建
+          RID=$(H "${API}/releases/tags/${VER}" 2>/dev/null | python -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+          if [ -z "$RID" ]; then
             echo "Creating Release $VER ..."
-            $GH release create "$VER" \
-              --title "PipPrinter ${VER} (win-x64)" \
-              --notes "PipPrinter ${VER} — Windows x64" \
-              -R "$REPO"
+            RID=$(H -d "{\"tag_name\":\"${VER}\",\"name\":\"PipPrinter ${VER}\",\"target_commitish\":\"master\",\"draft\":false,\"prerelease\":false}" \
+              "${API}/releases" | python -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+            [ -n "$RID" ] || { echo "ERROR: 创建 Release 失败"; exit 1; }
           else
-            echo "Reusing existing Release for $VER"
+            echo "Reusing Release id=${RID}"
           fi
 
-          # 逐件上传（gh 自动 multipart 分片，大文件不会超时）
-          echo "Uploading $ZIP ..."
-          $GH release upload "$VER" "$ZIP" -R "$REPO" --clobber
-          echo "Uploading $EXE ..."
-          $GH release upload "$VER" "$EXE" -R "$REPO" --clobber
-          echo "Uploading $MAN as latest.json ..."
-          $GH release upload "$VER" "$MAN" -R "$REPO" --clobber --filename latest.json
+          # 2) 逐件上传（curl PUT 二进制，--max-time 给足 90MB 余量）
+          up() {  # up <local> <name>
+            local lf="$1" nm="$2"
+            echo "Uploading ${nm} ..."
+            curl -sS -L --max-time 600 \
+              -H "Authorization: ${TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              -X POST \
+              -H "name: ${nm}" \
+              --data-binary @"$lf" \
+              "${API}/releases/${RID}/assets" > /dev/null
+            # 回查资产是否在册（grep 资产名，避免内联 Python f-string 触发 YAML 解析）
+            if curl -sS -H "$AUTH" -H "Accept: application/vnd.github+json" "${API}/releases/${RID}/assets" \
+                | grep -q "\"${nm}\""; then
+              echo "  asset ok ${nm}"
+            else
+              echo "ERROR: ${nm} 未在 Release ${RID} 资产中，上传失败"; exit 1
+            fi
+          }
+          up "$EXE" "PipPrinter-Setup-${VER}.exe"
+          up "$ZIP" "PipPrinter-win-x64-${VER_NOV}.zip"
+          up "$MAN" "latest.json"
 
-          echo "=== GitHub Release complete ==="
+          echo "=== GitHub Release ${RID} complete ==="
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
 
