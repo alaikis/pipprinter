@@ -107,18 +107,23 @@ jobs:
         id: gh_release
         # 用 gh CLI 上传（自动 multipart 分片 + 重试，90MB 不会超时）
         run: |
-          VER=${{ github.ref_name }}
-          ZIP="out/PipPrinter-win-x64-${VER}.zip"
+          VER=v${{ github.ref_name }}
+          # github.ref_name 已是 v1.01.014（带 v）；release.py 产物文件名用 lstrip(v) 后的 1.01.014
+          # 绿色包: out/PipPrinter-win-x64-1.01.014.zip（无 v）
+          # 安装版: out/PipPrinter-Setup-v1.01.014.exe（带 v）
+          # 清单:   out/1.01.014.json（无 v）
+          VER_NOV=${{ github.ref_name }}
+          ZIP="out/PipPrinter-win-x64-${VER_NOV}.zip"
           EXE="out/PipPrinter-Setup-${VER}.exe"
-          MAN="out/${VER}.json"
+          MAN="out/${VER_NOV}.json"
           REPO="alaikis/pipprinter"
           # choco 安装后 gh 在 C:\ProgramData\chocolatey\bin\，需加入 PATH
           export PATH="$PATH:/c/ProgramData/chocolatey/bin"
 
           echo "=== Files to upload ==="
           ls -la out/
-          which gh || echo "gh not found"
-          gh --version
+          which gh || echo "gh not found in PATH"
+          gh --version 2>/dev/null || echo "gh version check failed"
 
           # 若 Release 不存在则创建；已存在则直接 upload
           if ! gh release view "$VER" -R "$REPO" --json id >/dev/null 2>&1; then
@@ -136,8 +141,8 @@ jobs:
           gh release upload "$VER" "$ZIP" -R "$REPO" --clobber
           echo "Uploading $EXE ..."
           gh release upload "$VER" "$EXE" -R "$REPO" --clobber
-          echo "Uploading $MAN ..."
-          gh release upload "$VER" "$MAN" -R "$REPO" --clobber
+          echo "Uploading $MAN as latest.json ..."
+          gh release upload "$VER" "$MAN" -R "$REPO" --clobber --filename latest.json
 
           echo "=== GitHub Release complete ==="
         env:
@@ -156,7 +161,9 @@ jobs:
           python - <<'PYEOF'
           import os, json, subprocess, sys
           TOK = os.environ["GITEE_TOKEN"]
-          VER = "${{ github.ref_name }}"
+          # github.ref_name = "v1.01.014"（带 v）；release.py 产物文件名用 lstrip(v) 后的 1.01.014
+          VER = "${{ github.ref_name }}"          # v1.01.014（tag 名，带 v）
+          VER_NOV = VER.lstrip("v")             # 1.01.014（文件名用无 v）
           API = "https://gitee.com/api/v5/repos/alaikiscom/pipprinter"
           C = "curl"  # GitHub Actions Windows 镜像自带 curl
           H = ["-H", f"Authorization: Bearer {TOK}"]
@@ -205,14 +212,14 @@ jobs:
           # 删同名旧附件（避免配额浪费）
           for a in (get(f"{API}/releases/{rid}/attach_files") or []):
               aid, name = a.get("id"), a.get("name")
-              if aid and name in {"PipPrinter-win-x64-" + VER + ".zip", "latest.json"}:
+              if aid and name in {f"PipPrinter-win-x64-{VER_NOV}.zip", "latest.json"}:
                   subprocess.run([C,"-sS","-L","--max-time","60",*H,"-X","DELETE",
                                    f"{API}/releases/{rid}/attach_files/{aid}"],
                                  capture_output=True)
 
-          p = post_asset(rid, f"out/PipPrinter-win-x64-{VER}.zip", None)
+          p = post_asset(rid, f"out/PipPrinter-win-x64-{VER_NOV}.zip", None)
           print("绿色包:", p.get("id"), p.get("size"))
-          m = post_asset(rid, f"out/{VER}.json", "latest.json")
+          m = post_asset(rid, f"out/{VER_NOV}.json", "latest.json")
           print("latest.json:", m.get("id"), m.get("size"))
           PYEOF
         shell: bash
