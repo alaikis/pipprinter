@@ -147,14 +147,17 @@ jobs:
       - name: Install gh CLI
         # 直接下 GitHub 官方 gh 二进制到固定路径（choco 装 gh 落点不可靠，曾致 step14/15 找不到 gh.exe）
         run: |
-          $ghVer = "2.63.2"
+          $ghVer = "2.40.0"   # 确定的官方 release 资产名 gh_2.40.0_windows_amd64.zip
           $binDir = "C:\gh"
           New-Item -ItemType Directory -Force -Path $binDir | Out-Null
           $zip = "C:\gh\gh-$ghVer-win.exe.zip"
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           Invoke-WebRequest -Uri "https://github.com/cli/cli/releases/download/v$ghVer/gh_$ghVer_windows_amd64.zip" -OutFile $zip -UseBasicParsing
           Expand-Archive -Path $zip -DestinationPath $binDir -Force
-          Copy-Item "$binDir\bin\gh.exe" "C:\gh\gh.exe" -Force
+          # gh zip 解压结构: gh_2.40.0_windows_amd64/bin/gh.exe
+          $ghSrc = Get-ChildItem $binDir -Recurse -Filter "gh.exe" | Select-Object -First 1
+          if (-not $ghSrc) { throw "gh.exe 解压后未找到" }
+          Copy-Item $ghSrc.FullName "C:\gh\gh.exe" -Force
           & "C:\gh\gh.exe" --version
           Write-Host "GH_EXE=C:\gh\gh.exe"
         shell: powershell
