@@ -235,8 +235,9 @@ jobs:
         #   1) 查/建 Release（POST /releases，按 tag_name 幂等）
         #   2) 逐文件 PUT /releases/{id}/assets（GITHUB_TOKEN 鉴权）
         # 文件命名（见 release.py）：exe 带 v（= ref_name），zip/清单 无 v（= ref_name 去 v）。
+        # 不用 set -e（避免管道非零误杀），逐命令显式检查 + 详细回显，
+        # 即便下不了日志也能从失败 step 的 stdout/annotations 定位。
         run: |
-          set -euo pipefail
           VER=${{ github.ref_name }}                 # v1.01.014（带 v）
           VER_NOV=$(echo "$VER" | sed 's/^v//')       # 1.01.014（无 v）
           ZIP="out/PipPrinter-win-x64-${VER_NOV}.zip"
@@ -246,59 +247,65 @@ jobs:
           API="https://api.github.com/repos/${REPO}"
           TOKEN="${GITHUB_TOKEN}"
           AUTH="Authorization: token ${TOKEN}"
-          H() { curl -sS -H "$AUTH" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" "$@"; }
 
           echo "=== Files to upload ==="; ls -la out/
           for f in "$ZIP" "$EXE" "$MAN"; do
-            if [ ! -f "$f" ]; then echo "ERROR: 缺少产物 $f"; ls -la out/; exit 1; fi
+            if [ ! -f "$f" ]; then echo "::error::缺少产物 $f"; ls -la out/; exit 1; fi
             echo "  ok $f ($(stat -c%s "$f") B)"
           done
 
-          # 1) 查是否已有该 tag 的 Release；无则创建（创建失败回显原始返回体便于定位）
-          RID=$(H "${API}/releases/tags/${VER}" 2>/dev/null | python -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+          # 1) 查/建 Release（幂等）
+          RID=$(curl -sS -H "$AUTH" -H "Accept: application/vnd.github+json" "${API}/releases/tags/${VER}" \
+            | python -c "import sys,json;d=json.load(sys.stdin);print(d.get('id','') if isinstance(d,dict) else '')" 2>/dev/null || true)
           if [ -z "$RID" ]; then
             echo "Creating Release $VER ..."
-            RID=$(H -d "{\"tag_name\":\"${VER}\",\"name\":\"PipPrinter ${VER}\",\"target_commitish\":\"master\",\"draft\":false,\"prerelease\":false}" \
-              "${API}/releases" 2>/dev/null | python -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+            RID=$(curl -sS -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"${VER}\",\"name\":\"PipPrinter ${VER}\",\"target_commitish\":\"master\",\"draft\":false,\"prerelease\":false}" \
+              "${API}/releases" | python -c "import sys,json;d=json.load(sys.stdin);print(d.get('id','') if isinstance(d,dict) else '')" 2>/dev/null || true)
             if [ -z "$RID" ]; then
-              echo "ERROR: 创建 Release 失败，原始返回:"
-              H -d "{\"tag_name\":\"${VER}\",\"name\":\"PipPrinter ${VER}\",\"target_commitish\":\"master\",\"draft\":false,\"prerelease\":false}" \
-                "${API}/releases" 2>&1 | head -c400
-              echo; exit 1
+              echo "::error::创建 Release 失败，原始返回:"
+              curl -sS -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
+                -d "{\"tag_name\":\"${VER}\",\"name\":\"PipPrinter ${VER}\",\"target_commitish\":\"master\",\"draft\":false,\"prerelease\":false}" \
+                "${API}/releases" 2>&1 | head -c500; echo; exit 1
             fi
           else
             echo "Reusing Release id=${RID}"
           fi
 
-          # 2) 逐件上传（GitHub 资产上传标准：PUT upload_url；--http1.1 避 HTTP/2 大 body 坑，
-          #    重试 3 次抗网络抖动，回显 HTTP 码便于定位）
+          # 2) 逐件上传：GitHub 资产上传标准 —— POST /releases/{id}/assets?name= 拿 upload_url，
+          #    再 PUT 文件到 upload_url。--http1.1 + 重试抗 90MB 网络抖动。
           up() {  # up <local> <name>
-            local lf="$1" nm="$2" attempt code
+            local lf="$1" nm="$2" attempt code up_url
             echo "Uploading ${nm} ($(stat -c%s "$lf") B) ..."
             for attempt in 1 2 3; do
-              code=$(curl -sS -L --http1.1 --max-time 600 \
-                -H "Authorization: token ${TOKEN}" \
+              up_url=$(curl -sS -X POST -H "$AUTH" -H "Accept: application/octet-stream" \
                 -H "Content-Type: application/octet-stream" \
-                -X POST \
-                -H "name: ${nm}" \
-                -H "Accept: application/vnd.github+json" \
-                -o /tmp/up_res.json -w "%{http_code}" \
-                --data-binary @"$lf" \
-                "${API}/releases/${RID}/assets" 2>/tmp/up_err.txt)
-              if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
-                echo "  asset ok ${nm} (HTTP ${code}, attempt ${attempt})"
-                return 0
+                --data-binary @"$lf" -D - -o /dev/null \
+                "${API}/releases/${RID}/assets?name=${nm}" 2>/dev/null \
+                | tr -d '\r' | sed -n 's/^location: //Ip')
+              if [ -n "$up_url" ]; then
+                code=$(curl -sS -L --http1.1 --max-time 600 \
+                  -H "Authorization: token ${TOKEN}" \
+                  -H "Content-Type: application/octet-stream" \
+                  --data-binary @"$lf" -w "%{http_code}" -o /dev/null "$up_url" 2>/dev/null)
+                if [ "${code:-0}" -ge 200 ] && [ "${code:-0}" -lt 300 ]; then
+                  echo "  asset ok ${nm} (HTTP ${code}, attempt ${attempt})"
+                  return 0
+                fi
               fi
-              echo "  upload ${nm} HTTP ${code} attempt ${attempt}; err=$(cat /tmp/up_err.txt | head -c200)"
+              echo "  upload ${nm} attempt ${attempt} 失败（code=${code:-?} url=${up_url:-?}）"
               sleep 5
             done
-            echo "ERROR: ${nm} 上传 3 次均失败"; cat /tmp/up_res.json 2>/dev/null | head -c300; exit 1
+            echo "::error::${nm} 上传 3 次均失败"; exit 1
           }
           up "$EXE" "PipPrinter-Setup-${VER}.exe"
           up "$ZIP" "PipPrinter-win-x64-${VER_NOV}.zip"
           up "$MAN" "latest.json"
 
           echo "=== GitHub Release ${RID} complete ==="
+          curl -sS -H "$AUTH" -H "Accept: application/vnd.github+json" "${API}/releases/${RID}/assets" \
+            | python -c "import sys,json;[print('  asset',a.get('name'),a.get('size'),'bytes',a.get('state')) for a in json.load(sys.stdin).get('assets',[])]"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
