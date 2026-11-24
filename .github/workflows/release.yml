@@ -98,70 +98,38 @@ jobs:
         continue-on-error: true
         # e2e 失败不阻断后续发布步骤（CI 环境限制），但日志会保留供诊断。
 
+      - name: Install gh CLI
+        run: |
+          & "C:\ProgramData\chocolatey\bin\choco.exe" install -y gh --no-progress
+        shell: powershell
+
       - name: Publish to GitHub Release (large-file mirror)
         id: gh_release
-        # 创建/复用 GitHub Release + 上传三件套。用 REST API 而非 gh CLI。
+        # 用 gh CLI 上传（自动 multipart 分片 + 重试，90MB 不会超时）
         run: |
           VER=${{ github.ref_name }}
-          REPO=alaikis/pipprinter
           ZIP="out/PipPrinter-win-x64-${VER}.zip"
           EXE="out/PipPrinter-Setup-${VER}.exe"
           MAN="out/${VER}.json"
+          REPO="alaikis/pipprinter"
 
           echo "=== Files to upload ==="
           ls -la out/
 
-          # 1. 检查 Release 是否已存在（前次失败可能已创建空 Release）
-          RID=""
-          EXISTING=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" \
-            "https://api.github.com/repos/${REPO}/releases/tags/${VER}" 2>/dev/null)
-          EXISTING_ID=$(echo "$EXISTING" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('id','') if 'id' in d else '')" 2>/dev/null)
-          if [ -n "$EXISTING_ID" ]; then
-            RID=$EXISTING_ID
-            echo "Reusing existing Release id=$RID"
-          else
-            MANIFEST_BODY=$(python -c "
-            import json
-            ver = '${VER}'
-            print(json.dumps({
-                'tag_name': ver,
-                'name': f'PipPrinter {ver} (win-x64)',
-                'draft': False,
-                'prerelease': False
-            }))")
-            echo "Creating Release $VER ..."
-            RESP=$(curl -sS -X POST \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "$MANIFEST_BODY" \
-              "https://api.github.com/repos/${REPO}/releases")
-            RID=$(echo "$RESP" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
-            if [ -z "$RID" ]; then
-              echo "Release create failed: $RESP"
-              exit 1
-            fi
-            echo "Release created: id=$RID"
-          fi
+          # 创建 Release（若已存在则跳过，gh release create 会自动处理同名 tag）
+          gh release create "$VER" \
+            --title "PipPrinter ${VER} (win-x64)" \
+            --notes "PipPrinter ${VER} — Windows x64" \
+            -R "$REPO" || echo "Release may already exist, continuing..."
 
-          # 2. 逐件上传（GitHub 自动覆盖同名资产，无需手动删除）
-          for f in "$ZIP" "$EXE" "$MAN"; do
-            FNAME=$(basename "$f")
-            echo "Uploading $FNAME ..."
-            UPLOAD_RESP=$(curl -sS -X POST \
-              -H "Authorization: token ${GITHUB_TOKEN}" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary "@${f}" \
-              "https://uploads.github.com/repos/${REPO}/releases/${RID}/assets?name=${FNAME}")
-            UPLOAD_ID=$(echo "$UPLOAD_RESP" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
-            if [ -z "$UPLOAD_ID" ]; then
-              echo "Upload failed for $FNAME: $UPLOAD_RESP"
-              exit 1
-            fi
-            echo "Uploaded $FNAME: id=$UPLOAD_ID"
-          done
+          # 逐件上传（gh 自动 multipart 分片，大文件不会超时）
+          gh release upload "$VER" "$ZIP" -R "$REPO" --clobber
+          gh release upload "$VER" "$EXE" -R "$REPO" --clobber
+          gh release upload "$VER" "$MAN" -R "$REPO" --clobber
 
           echo "=== GitHub Release complete ==="
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
 
