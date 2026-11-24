@@ -367,9 +367,14 @@ jobs:
                                  capture_output=True)
 
           p = post_asset(rid, f"out/PipPrinter-win-x64-{VER_NOV}.zip", None)
-          print("绿色包:", p.get("id"), p.get("size"))
+          if p.get("id"):
+              print(f"绿色包: id={p.get('id')} size={p.get('size')}")
+          else:
+              # Gitee 绿色包(96MB)上传失败常见于配额/超时；不阻断，latest.json 的 url 已指 GitHub 主源，
+              # 自动更新可回落 GitHub 直链。显式告警便于诊断。
+              print(f"::warning::Gitee 绿色包上传失败(可能配额/超时)，latest.json url 指 GitHub 主源，自动更新回落 GitHub。raw={str(p)[:200]}")
           m = post_asset(rid, f"out/{VER_NOV}.json", "latest.json")
-          print("latest.json:", m.get("id"), m.get("size"))
+          print(f"latest.json: id={m.get('id')} size={m.get('size')}", "::error::latest.json 上传失败" if not m.get("id") else "")
           PYEOF
         shell: bash
         env:

@@ -192,13 +192,17 @@ def run_cmd(argv, cwd=None, timeout=1200, env=None):
 
 
 def build_manifest(ver, zp: Path, ep: Path) -> dict:
+    # 主源转 GitHub Releases（GitHub 无 1GB 附件总配额），下载/安装直链都指 GitHub；
+    # Gitee 仅承载「绿色包 + latest.json」最小时集供自动更新清单，url 仍指 GitHub 主源
+    # （Gitee 绿色包上传失败时自动更新可回落到 GitHub 直链，不 404）。
+    gh_dl = f"https://github.com/alaikis/pipprinter/releases/download/v{ver}"
     return {
         "version": ver,
-        "url": f"{GITEE_DL}/v{ver}/{zp.name}",
-        "setupUrl": f"{GITEE_DL}/v{ver}/{ep.name}",
+        "url": f"{gh_dl}/{zp.name}",
+        "setupUrl": f"{gh_dl}/{ep.name}",
         "sha256": sha256_of(zp),
         "size": zp.stat().st_size,
-        "notes": f"PipPrinter {ver} (win-x64 portable + setup)",
+        "notes": f"PipPrinter {ver} (win-x64 portable + setup)，主源 GitHub Releases",
     }
 
 
