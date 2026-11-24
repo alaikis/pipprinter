@@ -116,15 +116,23 @@ jobs:
           echo "=== Files to upload ==="
           ls -la out/
 
-          # 创建 Release（若已存在则跳过，gh release create 会自动处理同名 tag）
-          gh release create "$VER" \
-            --title "PipPrinter ${VER} (win-x64)" \
-            --notes "PipPrinter ${VER} — Windows x64" \
-            -R "$REPO" || echo "Release may already exist, continuing..."
+          # 若 Release 不存在则创建；已存在则直接 upload
+          if ! gh release view "$VER" -R "$REPO" --json id >/dev/null 2>&1; then
+            echo "Creating Release $VER ..."
+            gh release create "$VER" \
+              --title "PipPrinter ${VER} (win-x64)" \
+              --notes "PipPrinter ${VER} — Windows x64" \
+              -R "$REPO"
+          else
+            echo "Reusing existing Release for $VER"
+          fi
 
           # 逐件上传（gh 自动 multipart 分片，大文件不会超时）
+          echo "Uploading $ZIP ..."
           gh release upload "$VER" "$ZIP" -R "$REPO" --clobber
+          echo "Uploading $EXE ..."
           gh release upload "$VER" "$EXE" -R "$REPO" --clobber
+          echo "Uploading $MAN ..."
           gh release upload "$VER" "$MAN" -R "$REPO" --clobber
 
           echo "=== GitHub Release complete ==="
