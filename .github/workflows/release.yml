@@ -63,12 +63,10 @@ jobs:
 
       - name: Verify tools
         run: |
-          echo "=== Tools check ==="
+          Write-Host "=== Tools check ==="
           dotnet --version
           python --version
-          curl --version 2>$null | Select-Object -First 1
-          echo "NSIS:"
-          Test-Path "C:\Program Files (x86)\NSIS\Bin\makensis.exe"
+          Write-Host "NSIS makensis.exe exists: $(Test-Path 'C:\Program Files (x86)\NSIS\Bin\makensis.exe')"
         shell: powershell
 
       - name: Sync version files to tag
