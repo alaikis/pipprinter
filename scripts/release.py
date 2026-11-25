@@ -401,9 +401,17 @@ def cmd_publish(args):
             curl(f"{GITEE_API}/releases/{rid}/attach_files/{aid}", h + ["-X", "DELETE"])
 
     assert had is not None  # 保持逻辑清晰：existing 仅用于诊断
-    upload_gitee_asset(rid, zp, h)
-    upload_gitee_asset(rid, ep, h)
-    upload_gitee_asset(rid, mf, h, filename="latest.json")
+    # 顺序关键：latest.json 必须先传且独立于大文件。绿色包 ~96MB 常超 Gitee 单附件上限
+    # 导致 upload 抛错中断，若 latest.json 排在后面就永远传不上去 → 备份源更新清单停留在旧版。
+    # 每个附件独立吞错，任一失败不阻断其余（CI 的「补传 Gitee」step 才能保住最小集）。
+    for _label, _path, _fname in (
+            ("latest.json", mf, "latest.json"),
+            ("绿色包", zp, None),
+            ("安装包", ep, None)):
+        try:
+            upload_gitee_asset(rid, _path, h, filename=_fname)
+        except Exception as _e:
+            print(f"  [warn] Gitee 补传 {_label} 失败（非阻断）: {_e}")
 
     print("PUBLISH DONE — 等待 CDN 生效后运行 verify")
 

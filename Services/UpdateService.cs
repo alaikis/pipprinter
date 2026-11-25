@@ -41,6 +41,12 @@ namespace DuoAssistant.Services
         {
             Timeout = TimeSpan.FromMinutes(10)
         };
+        static UpdateService()
+        {
+            // GitHub API 对无 User-Agent 的请求强制返回 403，导致存量用户更新检查永远失败。
+            Http.DefaultRequestHeaders.TryAddWithoutValidation(
+                "User-Agent", "PipPrinter/" + Brand.Version + " (+https://www.litchio.com)");
+        }
         private readonly string _installDir;
         // 下载暂存必须在安装目录之外：替换时会整体移动安装目录，内部的暂存文件路径会全部失效
         private readonly string _downloadDir;
@@ -101,6 +107,19 @@ namespace DuoAssistant.Services
             return url;
         }
 
+        /// <summary>主源失败（GitHub API 限流/7x24限制等）时自动切 Gitee 备份源重试。</summary>
+        private static async Task<string> ResolveManifestWithFallbackAsync(string configured, CancellationToken ct)
+        {
+            bool isGitHub = configured.IndexOf("github.com", StringComparison.OrdinalIgnoreCase) >= 0;
+            try { return await ResolveManifestUrlAsync(configured, ct).ConfigureAwait(false); }
+            catch when (isGitHub)
+            {
+                Tools.Logger("主源 GitHub 检查失败，切 Gitee 备份源重试");
+                var fallback = "https://gitee.com/alaikiscom/pipprinter/releases/latest";
+                return await ResolveManifestUrlAsync(fallback, ct).ConfigureAwait(false);
+            }
+        }
+
         /// <summary>拉取清单 + 比对当前版本，返回 UpdateInfo。不实际下载。可传 token 限制后台检查耗时。</summary>
         public async Task<UpdateInfo> CheckUpdateAsync(CancellationToken cancellationToken = default)
         {
@@ -112,7 +131,7 @@ namespace DuoAssistant.Services
             {
                 Http.DefaultRequestHeaders.Accept.Clear();
                 Http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                manifestUrl = await ResolveManifestUrlAsync(s.UpdateManifestUrl, cancellationToken).ConfigureAwait(false);
+                manifestUrl = await ResolveManifestWithFallbackAsync(s.UpdateManifestUrl, cancellationToken).ConfigureAwait(false);
                 var json = await Http.GetStringAsync(manifestUrl, cancellationToken).ConfigureAwait(false);
                 var manifest = JsonConvert.DeserializeObject<UpdateManifest>(json);
                 if (manifest == null || string.IsNullOrWhiteSpace(manifest.Version))

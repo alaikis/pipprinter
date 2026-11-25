@@ -426,6 +426,19 @@ namespace DuoAssistant.Services
                     "  deny_color INTEGER NOT NULL DEFAULT 0," +
                     "  max_copies INTEGER NOT NULL DEFAULT 0," +
                     "  enabled INTEGER NOT NULL DEFAULT 1)");
+            // 报表聚合依本类 Open()，需确保 print_events 表存在（与 PrintEventStore 结构一致）。
+            // 全新/空库用户若未写过任打印事件，PrintEventStore.Open() 永不调用会导致本表缺失。
+            Exec(c, "CREATE TABLE IF NOT EXISTS print_events(" +
+                    "  id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                    "  ts INTEGER NOT NULL," +
+                    "  host TEXT NOT NULL DEFAULT ''," +
+                    "  engine TEXT NOT NULL DEFAULT ''," +
+                    "  bytes INTEGER NOT NULL DEFAULT 0," +
+                    "  copies INTEGER NOT NULL DEFAULT 1," +
+                    "  pages INTEGER NOT NULL DEFAULT 0," +
+                    "  ok INTEGER NOT NULL DEFAULT 1," +
+                    "  detail TEXT NOT NULL DEFAULT ''," +
+                    "  machine TEXT NOT NULL DEFAULT '')");
             Exec(c, "PRAGMA journal_mode=WAL");
             Exec(c, "PRAGMA synchronous=NORMAL");
             return c;
