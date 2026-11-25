@@ -38,6 +38,8 @@ namespace DuoAssistant.Views.Pages
         private readonly TextBox _manifestUrl = Ui.Input(380);
         private readonly CheckBox _autoCheckUpdate = new CheckBox { Text = "", AutoSize = true, Font = Ui.LabelFont };
         private readonly NumericUpDown _autoCheckInterval = Ui.Number(1, 720, 6, 55);
+private readonly CheckBox _autoSilentUpdate = new CheckBox { Text = "", AutoSize = true, Font = Ui.LabelFont };
+private readonly NumericUpDown _silentIdleMinutes = Ui.Number(0, 1440, 10, 55);
         private readonly Label _updateStatus = Ui.Label("");
         private readonly Label _status = Ui.Label("");
         // AO（Active-Online Print）
@@ -64,7 +66,8 @@ namespace DuoAssistant.Views.Pages
             _recycle.Text = L10n.T("清理时移入回收站");
             _aoEnabled.Text = L10n.T("启用 AO 终端：");
             _autoCheckUpdate.Text = L10n.T("自动检查新版本");
-            _updateStatus.Text = L10n.T("尚未检查更新");
+
+            _autoSilentUpdate.Text = L10n.T("闲时静默升级");            _updateStatus.Text = L10n.T("尚未检查更新");
 
             var root = new FlowLayoutPanel
             {
@@ -147,6 +150,9 @@ namespace DuoAssistant.Views.Pages
             root.Controls.Add(Ui.Label(L10n.T("启用后：启动延迟约 30 秒检查一次，之后按间隔在后台检查；发现新版本仅托盘提示，不自动下载或打断操作。离线或更新服务不可达时不发请求，网络恢复后自动补查。"), false));
             root.Controls.Add(Row(Ui.Button(L10n.T("检查更新"), (s, e) => CheckUpdate()), _updateStatus));
 
+            root.Controls.Add(Row(_autoSilentUpdate,
+                Ui.Label(L10n.T("闲时空闲阈值（分钟）：")), _silentIdleMinutes));
+            root.Controls.Add(Ui.Label(L10n.T("启用后：发现新版时自动下载替换（不弹确认），但不立即重启；待用户空闲 + 打印队列空闲时自动重启生效。"), false));
             root.Controls.Add(Row(
                 Ui.Button(L10n.T("保存设置"), (s, e) => Save(), 120, primary: true),
                 Ui.Button(L10n.T("重新载入"), (s, e) => RefreshData(), 100),
@@ -211,7 +217,10 @@ namespace DuoAssistant.Views.Pages
             _autoCheckUpdate.Checked = s.AutoCheckUpdate;
             _autoCheckInterval.Value = Math.Min(_autoCheckInterval.Maximum,
                 Math.Max(1, s.AutoCheckIntervalHours > 0 ? s.AutoCheckIntervalHours : 6));
-            _machineId.Text = s.MachineId;
+
+            _autoSilentUpdate.Checked = s.AutoSilentUpdate;
+            _silentIdleMinutes.Value = Math.Min(_silentIdleMinutes.Maximum,
+                Math.Max(0, s.SilentUpdateIdleMinutes > 0 ? s.SilentUpdateIdleMinutes : 10));            _machineId.Text = s.MachineId;
             _aoEnabled.Checked = s.AoEnabled;
             _aoWasEnabled = s.AoEnabled;
             _aoRelayUrl.Text = s.AoRelayUrl;
@@ -280,6 +289,9 @@ namespace DuoAssistant.Views.Pages
                 ["updateManifestUrl"] = _manifestUrl.Text.Trim(),
                 ["autoCheckUpdate"] = _autoCheckUpdate.Checked,
                 ["autoCheckIntervalHours"] = (int)_autoCheckInterval.Value,
+
+                ["autoSilentUpdate"] = _autoSilentUpdate.Checked,
+                ["silentUpdateIdleMinutes"] = (int)_silentIdleMinutes.Value,
                 ["language"] = language,
                 ["aoEnabled"] = _aoEnabled.Checked,
                 ["aoRelayUrl"] = _aoRelayUrl.Text.Trim(),

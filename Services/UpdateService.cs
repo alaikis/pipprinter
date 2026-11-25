@@ -181,13 +181,18 @@ namespace DuoAssistant.Services
         }
 
         /// <summary>
-        /// 执行更新：下载 zip → 校验 SHA256 → 解出 PipPrinter.exe 暂存 →
-        /// <summary>
-        /// 执行更新：下载 zip → SHA256 校验 → 解包暂存 →
+        /// 执行更新：下载 zip → 校验 SHA256 → 解包暂存 →
         /// 旧 exe 改名让位（Windows 允许改名运行中的 exe）→ 新 exe 就位 + 覆盖随包资源 →
         /// config/data/log 用户数据不动；失败自动回滚。重启后由 CleanupLeftovers 清理残留。
         /// </summary>
-        public async Task<UpdateInfo> ApplyUpdateAsync()
+        public Task<UpdateInfo> ApplyUpdateAsync() => ApplyUpdateAsync(silent: false);
+
+        /// <summary>
+        /// 执行更新；silent=true 时替换成功后【不立即重启】，把 pendingRestart 写入 config，
+        /// 由启动时的「延迟重启」定时器在用户空闲 + 打印队列空闲时生效。
+        /// 用于闲时静默升级：后台自动下载替换、不打断用户，避免在打印任务进行中硬重启。
+        /// </summary>
+        public async Task<UpdateInfo> ApplyUpdateAsync(bool silent)
         {
             var check = await CheckUpdateAsync().ConfigureAwait(false);
             if (!check.HasUpdate)
@@ -259,14 +264,19 @@ namespace DuoAssistant.Services
                 }
 
                 Tools.Logger("更新完成 v" + check.Remote + "：旧 exe 备份为 " + Path.GetFileName(oldExePath) +
-                             "，重启后生效");
+                             (silent ? "，静默替换不立即重启，待下次启动时延迟重启" : "，重启后生效"));
+                if (silent)
+                {
+                    SettingsStore.Instance.Update(s => s.PendingRestart = true);
+                }
                 return new UpdateInfo
                 {
                     HasUpdate = false,
                     Installed = true,
                     BackupPath = oldExePath,
                     ExePath = exePath,
-                    Error = "已替换；请重启应用以生效",
+                    RestartPending = silent,
+                    Error = silent ? "已静默替换，将在用户空闲且打印队列空闲时自动重启生效" : "已替换；请重启应用以生效",
                     Current = check.Remote
                 };
             }
@@ -375,6 +385,8 @@ namespace DuoAssistant.Services
         public string Error { get; set; }
         public string BackupPath { get; set; }
         public string ExePath { get; set; }
+        /// <summary>静默升级：exe 已替换就位但尚未重启；下次启动时由「延迟重启」定时器生效。</summary>
+        public bool RestartPending { get; set; }
         /// <summary>网络/主机不可达标记，仅用于自动检查退避；不进入 REST 响应。</summary>
         [JsonIgnore]
         public bool NetworkError { get; set; }

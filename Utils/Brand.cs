@@ -18,6 +18,6 @@ namespace DuoAssistant.Utils
         public const string Company = "Alaikis.com Inc";
         public const string CompanyUrl = "https://alaikis.com";
         // 版本规范 vMAJOR.FEATURE.PATCH：补丁 001→002；大变更 FEATURE+1；重大重构 MAJOR+1
-        public const string Version = "1.01.016";
+        public const string Version = "1.01.017";
     }
 }

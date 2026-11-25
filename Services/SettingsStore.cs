@@ -45,6 +45,18 @@ namespace DuoAssistant.Services
         public bool AutoCheckUpdate { get; set; } = true;
         // 后台检查间隔（小时）；0 或负数会被 Load 补为默认值 6。
         public int AutoCheckIntervalHours { get; set; } = 6;
+        // ---- 闲时静默升级（AutoUpdateService 检测到新版时自动下载替换、不弹 UI 确认）----
+        // 默认 false：保持现状（发现新版只弹托盘气泡，由用户点击才确认安装）。
+        // 设 true 后：检测到新版 → 自动走 TriggerSilentUpdate → 下载/SHA256/替换（保留 config/data/log），
+        // 但不立即重启，把 PendingRestart=true 写入 config；下次启动时由「延迟重启」定时器在
+        // 用户空闲 + 打印队列空闲时自动重启，避免中断正在进行的打印任务。
+        public bool AutoSilentUpdate { get; set; } = false;
+        // 用户空闲判定阈值（分钟）：超过该时长无键鼠输入才视为「闲时」，允许静默下载/延迟重启。
+        // 0 或负数 Load 时补 10；上限钳到 1440（24h）。
+        public int SilentUpdateIdleMinutes { get; set; } = 10;
+        // 静默升级已替换、待延迟重启标记。true 时启动定时器检测「用户空闲 + 打印队列空闲」后
+        // 自动 Process.Start(新 exe) + Application.Exit；重启成功后 CleanupLeftovers 清旧 exe 并复位 false。
+        public bool PendingRestart { get; set; } = false;
         // 界面语言：auto（跟随系统）/ zh-CN / en；未匹配的系统语言回退英文
         public string Language { get; set; } = "auto";
         // ---- Active-Online Print（AO 主动在线打印）----
@@ -180,7 +192,7 @@ namespace DuoAssistant.Services
                                                           "PreviewJob", "ListInboxFiles", "PrintInboxFile",
                                                           "ListNotifications", "TestNotification",
                                                           "AuthenticateUser", "ListIdentityProviders",
-                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients" })
+                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate" })
                                 if (!loaded.AllowedCommands.Exists(x =>
                                         string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
                                     loaded.AllowedCommands.Add(added);
@@ -194,6 +206,11 @@ namespace DuoAssistant.Services
                         if (loaded.DefaultMargin < 0) loaded.DefaultMargin = 50;
                         // 自动检查更新：间隔 <=0 补默认（bool 缺字段时属性初始值 true 即默认开启，无需补）
                         if (loaded.AutoCheckIntervalHours <= 0) loaded.AutoCheckIntervalHours = 6;
+                        // 闲时静默升级：缺字段时 AutoSilentUpdate 默认 false（保持现状），
+                        // SilentUpdateIdleMinutes 缺/负数补 10；上限钳 1440。
+                        if (loaded.SilentUpdateIdleMinutes < 0) loaded.SilentUpdateIdleMinutes = 10;
+                        if (loaded.SilentUpdateIdleMinutes == 0) loaded.SilentUpdateIdleMinutes = 10;
+                        if (loaded.SilentUpdateIdleMinutes > 1440) loaded.SilentUpdateIdleMinutes = 1440;
                         return loaded;
                     }
                 }
@@ -227,7 +244,7 @@ namespace DuoAssistant.Services
                     "ListDriverPackages", "InstallPrinterDriver", "GetTonerLevels", "PreviewJob",
                     "ListInboxFiles", "PrintInboxFile", "ListNotifications", "TestNotification",
                     "AuthenticateUser", "ListIdentityProviders",
-                    "SyncCentral", "GetCentralStatus", "ListCentralClients"
+                    "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate"
                 },
                 CleanWhitelist = new List<string>
                 {

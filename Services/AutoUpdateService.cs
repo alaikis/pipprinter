@@ -214,9 +214,36 @@ namespace DuoAssistant.Services
                     return;
                 _lastNotifiedVersion = info.Remote;
 
-                Action<UpdateInfo> cb;
-                lock (_gate) { cb = _onFound; }
-                cb?.Invoke(info);
+
+                // 闲时静默升级分支：若 AutoSilentUpdate 启用且当前处于「闲时」（用户空闲 + 打印队列空闲），
+                // 则直接调用 TriggerSilentUpdate（不弹气泡）；否则回退到原有的「气泡提示 + 用户点击」流程。
+                var ss = SettingsStore.Instance.Current;
+                bool silent = ss.AutoSilentUpdate &&
+                              DuoAssistant.Utils.IdleDetector.IsIdle(ss.SilentUpdateIdleMinutes) &&
+                              IsQueueIdle();
+                if (silent)
+                {
+                    Tools.Logger("自动检查更新：发现 v" + info.Remote + "，静默升级模式 → 尝试 TriggerSilentUpdate");
+                    try
+                    {
+                        var res = Newtonsoft.Json.Linq.JObject.Parse(
+                            CommandDispatcher.Execute("TriggerSilentUpdate", "{}"));
+                        var code = res["code"]?.Value<int>(null);
+                        var reason = res["data"]?["reason"]?.ToString();
+                        if (code == 200)
+                            Tools.Logger("静默升级结果: " + (reason ?? "已替换"));
+                    }
+                    catch (Exception ex)
+                    {
+                        Tools.Logger("静默升级失败: " + ex.Message);
+                    }
+                }
+                else
+                {
+                    Action<UpdateInfo> cb;
+                    lock (_gate) { cb = _onFound; }
+                    cb?.Invoke(info);
+                }
             }
             catch (Exception ex)
             {
@@ -306,6 +333,22 @@ namespace DuoAssistant.Services
                 return !(b[0] == 0xfe && (b[1] & 0xc0) == 0x80);
             }
             return false;
+        }
+
+        /// <summary>打印队列是否空闲：无 pending / printing / held 任务。</summary>
+        private static bool IsQueueIdle()
+        {
+            try
+            {
+                var summary = (dynamic)DuoAssistant.Services.PrintQueueService.Instance.Summary();
+                return (long)summary.pending == 0 &&
+                       (long)summary.printing == 0 &&
+                       (long)summary.held == 0;
+            }
+            catch
+            {
+                return true;
+            }
         }
     }
 }

@@ -150,6 +150,9 @@ namespace DuoAssistant
                 AutoUpdateService.Instance.Start(info => _home?.OnAutoUpdateFound(info));
             }
             catch (Exception ex) { Utils.Tools.Logger("启动自动检查更新失败: " + ex.Message); }
+            // 延迟重启：若静默升级已替换新 exe（PendingRestart=true），后台定时器检测「用户空闲 + 打印队列空闲」后自动重启。
+            StartDeferredRestartIfNeeded();
+
 
             try
             {
@@ -169,6 +172,47 @@ namespace DuoAssistant
                 PrintQueueService.Instance.Shutdown();
                 _singleInstance?.ReleaseMutex();
             }
+        }
+
+        /// <summary>
+        /// 启动「延迟重启」定时器：若 config.PendingRestart=true，每 60s 检测一次
+        /// 用户空闲（GetLastInputInfo）+ 打印队列空闲（pending/printing/held 全 0），
+        /// 条件满足则 Process.Start(新 exe) + Application.Exit，并清 PendingRestart。
+        /// </summary>
+        private static System.Threading.Timer _deferredRestartTimer;
+        private static void StartDeferredRestartIfNeeded()
+        {
+            var s = DuoAssistant.Services.SettingsStore.Instance.Current;
+            if (!s.PendingRestart) return;
+            DuoAssistant.Utils.Tools.Logger("启动：PendingRestart=true，启动延迟重启定时器（每 60s 检测空闲）");
+            _deferredRestartTimer = new System.Threading.Timer(_ =>
+            {
+                try
+                {
+                    var cfg = DuoAssistant.Services.SettingsStore.Instance.Current;
+                    if (!cfg.PendingRestart) return;
+
+                    var idleMs = DuoAssistant.Utils.IdleDetector.LastInputElapsedMs();
+                    if (idleMs < 0) return;
+                    var idleNeed = TimeSpan.FromMinutes(Math.Max(0, cfg.SilentUpdateIdleMinutes));
+                    if (idleMs < idleNeed.TotalMilliseconds) return;
+
+                    var summary = (dynamic)DuoAssistant.Services.PrintQueueService.Instance.Summary();
+                    if ((long)summary.pending > 0 || (long)summary.printing > 0 || (long)summary.held > 0) return;
+
+                    DuoAssistant.Utils.Tools.Logger("延迟重启：条件满足（空闲 + 队列空），启动新 exe");
+                    var exePath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PipPrinter.exe");
+                    if (!System.IO.File.Exists(exePath)) return;
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exePath) { UseShellExecute = true });
+                    DuoAssistant.Services.UpdateService.CleanupLeftovers();
+                    DuoAssistant.Services.SettingsStore.Instance.Update(x => x.PendingRestart = false);
+                    Application.Exit();
+                }
+                catch (Exception ex)
+                {
+                    DuoAssistant.Utils.Tools.Logger("延迟重启失败: " + ex.Message);
+                }
+            }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60));
         }
 
         /// <summary>

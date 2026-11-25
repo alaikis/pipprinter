@@ -1549,6 +1549,31 @@ namespace DuoAssistant.Services
                 : Result.error(info.Error ?? "更新失败", 500, "ApplyUpdate", data: info);
         }
 
+
+        /// <summary>
+        /// 闲时静默升级：检测到新版 → 检查用户空闲 + 打印队列空闲 → 下载/替换 → 不立即重启。
+        /// 由 AutoUpdateService 后台定时检查触发，或由 REST /ws 手动触发。
+        /// </summary>
+        public string TriggerSilentUpdate(string args)
+        {
+            var s = SettingsStore.Instance.Current;
+            if (!s.AutoSilentUpdate)
+                return Result.success(data: new { skipped = true, reason = "AutoSilentUpdate not enabled" }, cmd: "TriggerSilentUpdate", msg: "silent update not enabled");
+
+            var idleMs = DuoAssistant.Utils.IdleDetector.LastInputElapsedMs();
+            var idleNeed = TimeSpan.FromMinutes(Math.Max(0, s.SilentUpdateIdleMinutes));
+            if (idleMs < 0 || idleMs < idleNeed.TotalMilliseconds)
+                return Result.success(data: new { skipped = true, reason = "user active" }, cmd: "TriggerSilentUpdate", msg: "user active, skip");
+
+            var summary = (dynamic)PrintQueueService.Instance.Summary();
+            if ((long)summary.pending > 0 || (long)summary.printing > 0 || (long)summary.held > 0)
+                return Result.success(data: new { skipped = true, reason = "queue busy" }, cmd: "TriggerSilentUpdate", msg: "queue busy, skip");
+
+            var info = new UpdateService().ApplyUpdateAsync(silent: true).GetAwaiter().GetResult();
+            if (info.Installed)
+                return Result.success(data: info, cmd: "TriggerSilentUpdate", msg: "silently replaced, deferred restart pending");
+            return Result.error(info.Error ?? "update failed", 500, "TriggerSilentUpdate", data: info);
+        }
         // ------------------------------------------------ 打印管理（v1.01.011+）
 
         /// <summary>安全打印：列出等待 PIN/工卡认证释放的任务。</summary>
