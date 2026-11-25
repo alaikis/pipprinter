@@ -204,6 +204,16 @@ namespace DuoAssistant.Services
                 };
                 return Json(CommandDispatcher.Execute("ScanLanPrinters", body.ToString()));
             });
+            // 只读：打印机画像库（反向路由引擎的数据底座，由 PrinterDiscoveryService 定时扫描维护）。
+            // ?onlyOnline=1 仅返回在线画像。读库不实时扫；若从未跑过，GetPrinterProfiles 会先补一次。
+            app.MapGet("/api/printers/profiles", (HttpContext ctx) =>
+            {
+                var q = ctx.Request.Query;
+                bool only = q["onlyOnline"].ToString() == "1" ||
+                            string.Equals(q["onlyOnline"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+                var body = new JObject { ["onlyOnline"] = only ? "true" : "false" };
+                return Json(CommandDispatcher.Execute("GetPrinterProfiles", body.ToString()));
+            });
             app.MapGet("/api/queue", () => Json(CommandDispatcher.Execute("GetQueue", "{}")));
             app.MapGet("/api/disk", () => Json(CommandDispatcher.Execute("GetDiskInfo", "{}")));
             app.MapGet("/api/machine", () => Json(CommandDispatcher.Execute("GetMachineFingerprint", "{}")));

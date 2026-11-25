@@ -98,6 +98,11 @@ namespace DuoAssistant
             try { DuoAssistant.Services.CentralSyncService.Start(); }
             catch (Exception ex) { Utils.Tools.Logger("集中同步启动失败: " + ex.Message); }
 
+            // 打印机定时扫描画像库（配置 AutoScanPrinters=true 才起；间隔 ScanIntervalMinutes）
+            // 作为反向路由引擎的数据底座：每轮产出 在线/能力/负载 画像，落库供路由读取。
+            try { DuoAssistant.Services.PrinterDiscoveryService.Start(); }
+            catch (Exception ex) { Utils.Tools.Logger("打印机定时扫描启动失败: " + ex.Message); }
+
             _web = new WebServerService();
             // Main 为 STAThread 且尚未进入消息循环，同步等待启动是安全的
             _web.StartAsync().GetAwaiter().GetResult();
@@ -120,6 +125,25 @@ namespace DuoAssistant
                 _ws.Start();
             }
             catch (Exception ex) { Utils.Tools.Logger("WebSocket 启动失败: " + ex); }
+
+            // 打印机画像状态变化（discovered/lost/offline）通过 WS 推送，供前端实时感知。
+            try
+            {
+                DuoAssistant.Services.PrinterDiscoveryService.SetPushHandler((evt, obj) =>
+                {
+                    try
+                    {
+                        _web.Broadcast(Newtonsoft.Json.Linq.JObject.FromObject(new
+                        {
+                            evt,
+                            ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                            data = obj
+                        }).ToString(Newtonsoft.Json.Formatting.None));
+                    }
+                    catch (Exception e) { Utils.Tools.Logger("打印机状态事件推送失败: " + e.Message); }
+                });
+            }
+            catch (Exception ex) { Utils.Tools.Logger("打印机状态事件注入失败: " + ex.Message); }
 
             // Active-Online Print：主动向中继服务器建立出站长连接（仅 AoEnabled=true 时生效）
             try
@@ -165,6 +189,7 @@ namespace DuoAssistant
                 DuoAssistant.Services.NotificationService.Stop();
                 DuoAssistant.Services.CentralSyncService.Stop();
                 DuoAssistant.Services.ScheduledPrintScheduler.Instance.Stop();
+                DuoAssistant.Services.PrinterDiscoveryService.Stop();
                 _web?.StopAsync().GetAwaiter().GetResult();
                 _ws?.Stop();
                 _ao.Stop();
@@ -351,6 +376,7 @@ namespace DuoAssistant
             {
                 StopTonerPolling();
                 DuoAssistant.Services.ScheduledPrintScheduler.Instance.Stop();
+                DuoAssistant.Services.PrinterDiscoveryService.Stop();
                 _web?.StopAsync().GetAwaiter().GetResult();
                 _ws?.Stop();
                 _ao.Stop();

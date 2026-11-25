@@ -113,6 +113,20 @@ namespace DuoAssistant.Services
         public string CentralApiUrl { get; set; } = "";
         public string CentralApiToken { get; set; } = "";
         public int CentralSyncMinutes { get; set; } = 30;
+        // ---- 定时扫描打卐机画像库、反向路由引擎〈无需印诡器详情〉——
+        // 开启后每次跑一次局劑网扫描(WMI+SSDP+mDNS)+本机已装列表，归一化成画像囚存到库，后绪路由引擎读取，不需实时再扫。
+        public bool AutoScanPrinters { get; set; } = false;
+        // 定时扫描间隔(分钟)；0/负数 Load 补 5。
+        public int ScanIntervalMinutes { get; set; } = 5;
+        // 扫描方法位揧制(0x1=installed 0x2=ssdp 0x4=mdns 0x8=active)，默认全选。
+        public int ScanMethods { get; set; } = 0xF;
+        // 画像离线判定 TTL(秒)；超过该时长未再打到则标记离线。0/负数 Load 补 300。
+        public int ProfileTtlSeconds { get; set; } = 300;
+        // 反向路由引擎:printer 界札时按画像們掩选机（自动模式）。printer 非空则优先指定。
+        public bool ReverseRoutingEnabled { get; set; } = true;
+        // 自动模式选机策略: idle-first(充载最低，默认) / round-robin / nearest。
+        public string ReverseRoutingPolicy { get; set; } = "idle-first";
+
     }
 
     /// <summary>
@@ -192,7 +206,7 @@ namespace DuoAssistant.Services
                                                           "PreviewJob", "ListInboxFiles", "PrintInboxFile",
                                                           "ListNotifications", "TestNotification",
                                                           "AuthenticateUser", "ListIdentityProviders",
-                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate" })
+                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate", "GetPrinterProfiles" })
                                 if (!loaded.AllowedCommands.Exists(x =>
                                         string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
                                     loaded.AllowedCommands.Add(added);
@@ -211,6 +225,12 @@ namespace DuoAssistant.Services
                         if (loaded.SilentUpdateIdleMinutes < 0) loaded.SilentUpdateIdleMinutes = 10;
                         if (loaded.SilentUpdateIdleMinutes == 0) loaded.SilentUpdateIdleMinutes = 10;
                         if (loaded.SilentUpdateIdleMinutes > 1440) loaded.SilentUpdateIdleMinutes = 1440;
+                        // 定时扫描画像库：间隔 <=0 补 5；TTL <=0 补 300；Methods 默认全选。
+                        if (loaded.ScanIntervalMinutes <= 0) loaded.ScanIntervalMinutes = 5;
+                        if (loaded.ScanIntervalMinutes > 1440) loaded.ScanIntervalMinutes = 1440;
+                        if (loaded.ProfileTtlSeconds <= 0) loaded.ProfileTtlSeconds = 300;
+                        if (loaded.ScanMethods == 0) loaded.ScanMethods = 0xF;
+
                         return loaded;
                     }
                 }
@@ -244,7 +264,7 @@ namespace DuoAssistant.Services
                     "ListDriverPackages", "InstallPrinterDriver", "GetTonerLevels", "PreviewJob",
                     "ListInboxFiles", "PrintInboxFile", "ListNotifications", "TestNotification",
                     "AuthenticateUser", "ListIdentityProviders",
-                    "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate"
+                    "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate", "GetPrinterProfiles"
                 },
                 CleanWhitelist = new List<string>
                 {

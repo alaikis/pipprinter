@@ -195,9 +195,41 @@ namespace DuoAssistant.Services
                     ? new Uri(ExtendedPrintService.NormalizeUrl(target)).AbsolutePath
                     : target;
                 var category = PrintFileTypes.CategoryOf(Path.GetExtension(probe));
-                return Decorate(PrintFile(WithTarget(dt, target)), "PrintFile", category,
+                // 反向路由引擎：若用户未指定打印机，推断需要能力后反向选机，写回 dt.printer（与指定模式同一入口，未指定也可省控）。
+                var rrInfo = DuoAssistant.Services.ReverseRouteService.Route(Str(dt, "printer"),
+                    DuoAssistant.Services.ReverseRouteService.InferNeed("AutoPrint", category,
+                        Bool(dt, "color", false), Str(dt, "duplex")));
+                if (!string.IsNullOrWhiteSpace(rrInfo.Printer))
+                {
+                    var copy = (JObject)dt.DeepClone();
+                    copy["printer"] = rrInfo.Printer;
+                    dt = copy;
+                }
+                var decorated = Decorate(PrintFile(WithTarget(dt, target)), "PrintFile", category,
                     isUrl ? "识别为网络文件，下载后按文件形式自动处理"
                           : "识别为本地文件，按文件形式自动处理");
+                if (!string.IsNullOrWhiteSpace(rrInfo.SelectedKey) || rrInfo.Fallback)
+                {
+                    try
+                    {
+                        var jo = Newtonsoft.Json.Linq.JObject.Parse(decorated);
+                        var dd = jo["data"] as Newtonsoft.Json.Linq.JObject ?? new Newtonsoft.Json.Linq.JObject();
+                        dd["reverseRoute"] = new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["selected"] = rrInfo.Printer,
+                            ["channel"] = rrInfo.Channel,
+                            ["reason"] = rrInfo.Reason,
+                            ["userSpecified"] = rrInfo.UserSpecified,
+                            ["fallback"] = rrInfo.Fallback,
+                            ["selectedKey"] = rrInfo.SelectedKey,
+                            ["candidates"] = rrInfo.CandidateCount
+                        };
+                        jo["data"] = dd;
+                        decorated = jo.ToString(Newtonsoft.Json.Formatting.None);
+                    }
+                    catch { /* 详细信息严入失败不影响主流程 */ }
+                }
+                return decorated;
             }
             catch (Exception ex)
             {
@@ -947,6 +979,30 @@ namespace DuoAssistant.Services
             catch (Exception ex)
             {
                 return Result.error(ex.Message, cmd: "ScanLanPrinters");
+            }
+        }
+
+        /// <summary>读取打印机画像库（反向路由引擎数据底座）：全量 / 仅在线。</summary>
+        public string GetPrinterProfiles(string args)
+        {
+            try
+            {
+                var dt = ParseObject(args);
+                bool onlyOnline = false;
+                var t = Str(dt, "onlyOnline");
+                if (!string.IsNullOrWhiteSpace(t)) bool.TryParse(t, out onlyOnline);
+                var list = DuoAssistant.Services.PrinterDiscoveryService.ReadProfiles(includeOffline: !onlyOnline);
+                var data = new
+                {
+                    count = list.Count,
+                    lastRun = DuoAssistant.Services.PrinterDiscoveryService.LastRun,
+                    profiles = list
+                };
+                return Result.success(data, cmd: "GetPrinterProfiles");
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: "GetPrinterProfiles");
             }
         }
 
