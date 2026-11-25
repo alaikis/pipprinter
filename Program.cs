@@ -46,10 +46,11 @@ namespace DuoAssistant
                 return;
             }
 
-            // 版本感知：若 19861 已被「更低版本」实例占用（升级未重启遗留），提示并建议结束旧版。
-            // 旧版若仍占着端口，本实例的 Kestrel 会绑定失败（已被 WebServerService 捕获、不崩溃），
-            // 此时提示用户结束旧进程后重启新版，避免请求继续落到旧版上。
-            ProbeStaleInstance();
+            // 版本感知 + 主动接管：若 19861 已被「更低版本」实例占用（升级未重启遗留），
+            // 旧版 Kestrel 占着端口，本实例首次绑定必然失败、请求会落到旧版（表现为
+            // 「获取不到打印机列表」——旧版无 GDI+/WMI 回退）。这里不止提示，而是
+            // 结束旧版进程并等待端口释放，让下方 WebServerService.StartAsync 真正接管 19861。
+            bool staleTakenOver = TakeOverStaleInstance();
 
             // 清理上次自动更新留下的 PipPrinter.exe.old-*（旧进程已退出，此时可删）
             UpdateService.CleanupLeftovers();
@@ -100,6 +101,17 @@ namespace DuoAssistant
             _web = new WebServerService();
             // Main 为 STAThread 且尚未进入消息循环，同步等待启动是安全的
             _web.StartAsync().GetAwaiter().GetResult();
+            // 若刚结束旧版接管，首次绑定可能因端口尚未释放而失败 → 等端口释放后重试一次。
+            if (staleTakenOver && !_web.IsRunning)
+            {
+                Utils.Tools.Logger("Web 服务首次启动失败（旧版端口释放中），等待后重试: " + (_web.LastError ?? ""));
+                var waited = 0;
+                while (waited < 15 && PortInUse(SettingsStore.Instance.Current.WebPort))
+                { Thread.Sleep(500); waited += 500; }
+                _web.StartAsync().GetAwaiter().GetResult();
+                if (_web.IsRunning)
+                    Utils.Tools.Logger("Web 服务重试启动成功（已接管旧版端口）");
+            }
 
             // WebSocket 与 Web 共用同一 Kestrel 端口（端点 /ws），必须在 Web 启动后挂载
             try
@@ -160,40 +172,110 @@ namespace DuoAssistant
         }
 
         /// <summary>
-        /// 探测本机 19861 上是否驻留着「更低版本」的旧实例（升级后未重启的遗留进程）。
-        /// 旧版占用时，本实例的 Web 服务会绑定失败（已被 WebServerService 捕获、不崩溃），
-        /// 若不在这里提示，用户会误以为新版正常、而请求实际落在旧版上（表现为「获取不到列表」等）。
-        /// 这里打旧版 /health 取版本号做比对，命中旧版就明确提示结束旧进程再重启新版。
+        /// 探测本机 19861 上是否驻留着「更低版本」的旧实例（升级未重启的遗留进程）。
+        /// 旧版 Kestrel 占着端口，本实例首次绑定必然失败、请求会落到旧版上
+        /// （表现为「获取不到打印机列表」——旧版无 GDI+/WMI 回退）。
+        ///
+        /// 这里不止提示，而是<strong>主动接管</strong>：
+        ///   1) 打旧版 /health 取版本号，确认是「更低版本」旧实例；
+        ///   2) 结束旧版 PipPrinter 进程（排除自身，避免杀掉本实例）；
+        ///   3) 返回 true，让调用方在 Web 服务首次绑定失败后等待端口释放并重试，
+        ///      使新版真正接管 19861。
+        /// 结束旧版失败（权限）时退回旧的「提示」语义，仍不影响启动。
         /// </summary>
-        private static void ProbeStaleInstance()
+        private static bool TakeOverStaleInstance()
         {
+            int port = 0;
             try
             {
-                var port = SettingsStore.Instance.Current.WebPort;
-                if (port <= 0) return;
+                port = SettingsStore.Instance.Current.WebPort;
+                if (port <= 0) return false;
                 var healthUrl = "http://127.0.0.1:" + port + "/health";
                 using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(4) };
                 var json = http.GetStringAsync(healthUrl).GetAwaiter().GetResult();
                 var version = Newtonsoft.Json.Linq.JToken.Parse(json)["version"]?.ToString();
-                if (string.IsNullOrWhiteSpace(version)) return;
-                // 对方比当前版本旧（UpdateService.IsNewer(当前, 对方) 为真 → 当前更新 → 对方是旧版）
-                if (DuoAssistant.Services.UpdateService.IsNewer(Utils.Brand.Version, version))
+                if (string.IsNullOrWhiteSpace(version)) return false;
+                // 对方比当前版本旧（IsNewer(当前, 对方) 为真 → 当前更新 → 对方是旧版）
+                if (!DuoAssistant.Services.UpdateService.IsNewer(Utils.Brand.Version, version)) return false;
+                Utils.Tools.Logger("检测到旧版本实例 v" + version + " 占用端口 " + port +
+                                   "（当前 v" + Utils.Brand.Version + "），尝试结束旧进程接管端口");
+
+                if (KillStalePipPrinters())
                 {
-                    var msg = string.Format(
-                        "检测到旧版本 v{0} 仍在运行并占用服务端口。\n" +
-                        "当前为 v{1}，旧版本会占用端口、导致新逻辑（如打印机列表）不生效。\n\n" +
-                        "请在任务管理器结束名为 PipPrinter 的旧版进程，再启动本新版；\n" +
-                        "或等待旧版自动更新后重启。", version, Utils.Brand.Version);
-                    MessageBox.Show(Utils.Brand.Title + "\r\n" + msg,
-                        Utils.L10n.T("提示"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    Utils.Tools.Logger("检测到旧版本实例 v" + version + " 占用端口 " + port +
-                                        "（当前 v" + Utils.Brand.Version + "）");
+                    // 端口由旧版占用，结束后调用方会等待释放并重试绑定
+                    return true;
                 }
+
+                // 结束失败（权限/进程已退）：退回提示语义，引导手动处理
+                var msg = string.Format(
+                    "检测到旧版本 v{0} 仍占用服务端口 {1}，自动结束失败（可能权限不足）。\n" +
+                    "当前为 v{2}，旧版本占用会导致新逻辑（如打印机列表）不生效。\n\n" +
+                    "请在任务管理器结束名为 PipPrinter 的旧版进程后重启本新版。",
+                    version, port, Utils.Brand.Version);
+                MessageBox.Show(Utils.Brand.Title + "\r\n" + msg,
+                    Utils.L10n.T("提示"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
             }
             catch
             {
                 // 端口无响应（旧进程未起 Web 或已退出）或解析失败：静默，不影响启动
+                return false;
             }
+        }
+
+        /// <summary>
+        /// 结束本机其它「PipPrinter」进程（按进程名匹配主 exe，排除自身进程 PID），
+        /// 供旧版端口接管使用。只结束名称精确匹配 PipPrinter.exe 的进程，绝不动其它程序。
+        /// 返回是否至少结束了一个旧进程。
+        /// </summary>
+        private static bool KillStalePipPrinters()
+        {
+            try
+            {
+                var cur = System.Diagnostics.Process.GetCurrentProcess();
+                var curPid = cur.Id;
+                var curExe = System.IO.Path.GetFileName(cur.ProcessName) ?? "";
+                bool killed = false;
+                foreach (var p in System.Diagnostics.Process.GetProcesses())
+                {
+                    try
+                    {
+                        if (p.Id == curPid) continue;
+                        // 只结束与当前主程序同名（PipPrinter.exe）的旧实例；
+                        // 不同版本的 exe 名一致（都叫 PipPrinter.exe），靠 PID 排除自身即可区分新旧。
+                        var pExe = System.IO.Path.GetFileName(p.ProcessName ?? "");
+                        if (string.Equals(pExe, curExe, StringComparison.OrdinalIgnoreCase))
+                        {
+                            p.Kill(true);
+                            killed = true;
+                            Utils.Tools.Logger("已结束旧版进程 PID=" + p.Id);
+                        }
+                    }
+                    catch { /* 个别进程取不到信息忽略 */ }
+                    finally { p.Dispose(); }
+                }
+                // 给旧进程一点时间释放端口
+                if (killed) Thread.Sleep(800);
+                return killed;
+            }
+            catch (Exception ex)
+            {
+                Utils.Tools.Logger("结束旧版进程失败: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>探测某 TCP 端口当前是否仍被占用（127.0.0.1 上能否连上即视为占用）。</summary>
+        private static bool PortInUse(int port)
+        {
+            if (port <= 0) return false;
+            try
+            {
+                using var client = new System.Net.Sockets.TcpClient();
+                var ok = client.BeginConnect("127.0.0.1", port, null, null);
+                return ok.AsyncState != null && ok.AsyncWaitHandle.WaitOne(300);
+            }
+            catch { return false; }
         }
 
         /// <summary>
