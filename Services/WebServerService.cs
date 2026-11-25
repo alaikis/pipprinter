@@ -214,6 +214,9 @@ namespace DuoAssistant.Services
                 var body = new JObject { ["onlyOnline"] = only ? "true" : "false" };
                 return Json(CommandDispatcher.Execute("GetPrinterProfiles", body.ToString()));
             });
+            // 只读：中心侧跨机在线打印机画像（企业反向路由数据源，需配置 CentralApiUrl 才有数据）。
+            app.MapGet("/api/central/printers", () =>
+                Json(CommandDispatcher.Execute("GetCentralPrinters", "{}")));
             app.MapGet("/api/queue", () => Json(CommandDispatcher.Execute("GetQueue", "{}")));
             app.MapGet("/api/disk", () => Json(CommandDispatcher.Execute("GetDiskInfo", "{}")));
             app.MapGet("/api/machine", () => Json(CommandDispatcher.Execute("GetMachineFingerprint", "{}")));

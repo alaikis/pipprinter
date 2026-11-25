@@ -1006,6 +1006,27 @@ namespace DuoAssistant.Services
             }
         }
 
+        /// <summary>中心侧：列出跨机打卐机画像（供企业反向路由选机）。</summary>
+        public string GetCentralPrinters(string args)
+        {
+            try
+            {
+                var cfg = SettingsStore.Instance.Current;
+                if (string.IsNullOrWhiteSpace(cfg.CentralApiUrl))
+                    return Result.success(new { onlinePrinters = 0, message = "未配置中心（纯本机模式）" }, cmd: "GetCentralPrinters");
+                var data = new
+                {
+                    onlinePrinters = DuoAssistant.Services.CentralSyncService.OnlinePrinterCount(),
+                    clients = DuoAssistant.Services.CentralSyncService.Clients()
+                };
+                return Result.success(data, cmd: "GetCentralPrinters");
+            }
+            catch (Exception ex)
+            {
+                return Result.error(ex.Message, cmd: "GetCentralPrinters");
+            }
+        }
+
         /// <summary>
         /// 网络打印机智能直发：给定目标 IP（ip，可带端口）与文件（target），本机不装驱动即可打印。
         /// 文件先渲染为 PDF，再按缓存/自动探测选通道：631 IPP → 9100 RAW 降级；识别结果按 IP 缓存。

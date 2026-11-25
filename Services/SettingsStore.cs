@@ -206,7 +206,7 @@ namespace DuoAssistant.Services
                                                           "PreviewJob", "ListInboxFiles", "PrintInboxFile",
                                                           "ListNotifications", "TestNotification",
                                                           "AuthenticateUser", "ListIdentityProviders",
-                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate", "GetPrinterProfiles" })
+                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate", "GetPrinterProfiles", "GetCentralPrinters", "GetCentralPrinters" })
                                 if (!loaded.AllowedCommands.Exists(x =>
                                         string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
                                     loaded.AllowedCommands.Add(added);
@@ -264,7 +264,7 @@ namespace DuoAssistant.Services
                     "ListDriverPackages", "InstallPrinterDriver", "GetTonerLevels", "PreviewJob",
                     "ListInboxFiles", "PrintInboxFile", "ListNotifications", "TestNotification",
                     "AuthenticateUser", "ListIdentityProviders",
-                    "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate", "GetPrinterProfiles"
+                    "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate", "GetPrinterProfiles", "GetCentralPrinters"
                 },
                 CleanWhitelist = new List<string>
                 {

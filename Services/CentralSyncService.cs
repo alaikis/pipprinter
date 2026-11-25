@@ -24,6 +24,8 @@ namespace DuoAssistant.Services
         public List<JObject> Events { get; set; } = new List<JObject>();
         public List<JObject> Costs { get; set; } = new List<JObject>();
         public List<JObject> Toner { get; set; } = new List<JObject>();
+        // 本机打印机画像（供中心跨机反向路由选机）：全量上报在线画像。
+        public List<JObject> Profiles { get; set; } = new List<JObject>();
     }
 
     /// <summary>中心已注册的客户端节点。</summary>
@@ -88,7 +90,9 @@ namespace DuoAssistant.Services
                     MachineId = cfg.MachineId ?? "",
                     Ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                     Version = Brand.Version,
-                    Events = events, Costs = costs, Toner = toner
+                    Events = events, Costs = costs, Toner = toner,
+                    Profiles = DuoAssistant.Services.PrinterDiscoveryService.ReadProfiles(includeOffline: false)
+                        .Select(x => Newtonsoft.Json.Linq.JObject.FromObject(x)).ToList()
                 };
                 var json = Newtonsoft.Json.JsonConvert.SerializeObject(payload);
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -133,6 +137,24 @@ namespace DuoAssistant.Services
                     cmd.Parameters.AddWithValue("$p", e["pages"]?.Value<int>() ?? 0);
                     cmd.Parameters.AddWithValue("$o", e["ok"]?.Value<bool>() == true ? 1 : 0);
                     cmd.ExecuteNonQuery();
+                }
+
+                foreach (var pr in payload.Profiles ?? new List<JObject>())
+                {
+                    using var pcmd = c.CreateCommand();
+                    pcmd.Transaction = tx;
+                    pcmd.CommandText = "INSERT OR REPLACE INTO central_printer_profiles(machine, key, name, type, protocol, online, address, port, last_seen, ts) VALUES($m,$k,$n,$ty,$pr,$on,$a,$po,$ls,$t)";
+                    pcmd.Parameters.AddWithValue("$m", payload.MachineId);
+                    pcmd.Parameters.AddWithValue("$k", pr["key"]?.ToString() ?? "");
+                    pcmd.Parameters.AddWithValue("$n", pr["name"]?.ToString() ?? "");
+                    pcmd.Parameters.AddWithValue("$ty", pr["type"]?.ToString() ?? "");
+                    pcmd.Parameters.AddWithValue("$pr", pr["protocol"]?.ToString() ?? "");
+                    pcmd.Parameters.AddWithValue("$on", pr["online"]?.Value<bool>() == true ? 1 : 0);
+                    pcmd.Parameters.AddWithValue("$a", pr["address"]?.ToString() ?? "");
+                    pcmd.Parameters.AddWithValue("$po", pr["port"]?.Value<int>() ?? 0);
+                    pcmd.Parameters.AddWithValue("$ls", pr["lastSeenAt"]?.Value<long>() ?? 0);
+                    pcmd.Parameters.AddWithValue("$t", payload.Ts);
+                    pcmd.ExecuteNonQuery();
                 }
                 using (var meta = c.CreateCommand())
                 {
@@ -192,7 +214,8 @@ namespace DuoAssistant.Services
                             ["totalEvents"] = r.GetInt32(0),
                             ["totalPages"] = r.IsDBNull(1) ? 0 : r.GetInt32(1),
                             ["failed"] = r.IsDBNull(2) ? 0 : r.GetInt32(2),
-                            ["clients"] = Clients().Count
+                            ["clients"] = Clients().Count,
+                            ["onlinePrinters"] = OnlinePrinterCount()
                         };
                 }
             }
@@ -224,7 +247,33 @@ namespace DuoAssistant.Services
                     " events INTEGER NOT NULL DEFAULT 0)";
                 cmd.ExecuteNonQuery();
             }
-            return c;
+            using (var cmd = c.CreateCommand())
+            {
+                cmd.CommandText = "CREATE TABLE IF NOT EXISTS central_printer_profiles("
+                    + "machine TEXT NOT NULL, key TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', type TEXT NOT NULL DEFAULT '',"
+                    + " protocol TEXT NOT NULL DEFAULT '', online INTEGER NOT NULL DEFAULT 0, address TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 0," 
+                    + " last_seen INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(machine, key))";
+                cmd.ExecuteNonQuery();
+            }
+                        return c;
+        }
+
+        /// <summary>中心侧：计数跨机在线打卐机到总数。</summary>
+        public static int OnlinePrinterCount()
+        {
+            try
+            {
+                lock (Gate)
+                using (var c = Open())
+                using (var cmd = c.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT COUNT(*) FROM central_printer_profiles WHERE online=1";
+                    using var r = cmd.ExecuteReader();
+                    if (r.Read()) return r.GetInt32(0);
+                }
+            }
+            catch (Exception ex) { Tools.Logger("中心在线打卐机统计失败: " + ex.Message); }
+            return 0;
         }
 
         private static long LoadCursor()
