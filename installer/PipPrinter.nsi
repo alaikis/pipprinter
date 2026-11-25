@@ -90,6 +90,24 @@ Section "PipPrinter (required)" SEC_CORE
   ; 若应用正在运行，先尝试结束（静默失败不影响安装）
   nsExec::Exec 'taskkill /IM PipPrinter.exe /F'
 
+  ; 检测旧版并静默接管：若注册表记有旧安装目录且与本次 $INSTDIR 不同，
+  ; 则自动沿用旧目录、静默卸载旧版（保留用户数据 config/data/log），再覆盖安装。
+  ; 全程无弹窗（用户 2026-11-25 确认：检测到旧版即静默自动接管）。
+  ReadRegStr $R1 HKCU "Software\PipPrinter" "InstallDir"
+  ReadRegStr $R0 HKCU "Software\PipPrinter" "Version"
+  ${If} $R1 != ""
+    ${If} $R1 != "$INSTDIR"
+      StrCpy $INSTDIR "$R1"
+      DetailPrint "检测到旧版 v$R0，静默卸载旧安装（保留用户数据）并接管目录 $R1"
+      ; 静默卸载旧版保留用户数据：
+      ;   - /S 静默执行；卸载器内「是否删除用户数据」弹窗在静默模式下不会自动走删除分支
+      ;     （MB_YESNO 静默默认取 IDNO），故 config/data/log 得以保留。
+      ;   - 调用旧版自带的 Uninstall.exe（其 regcleanup 会清快捷方式/自启/注册表）。
+      ; 若旧版无卸载器（极早期版本），/S 调用静默失败，下面 File /r 覆盖安装兜底。
+      nsExec::Exec '"$INSTDIR\Uninstall.exe" /S'
+    ${EndIf}
+  ${EndIf}
+
   ; 备份用户配置（升级保留）
   StrCpy $R0 ""
   ${If} ${FileExists} "$INSTDIR\config\appsettings.json"
