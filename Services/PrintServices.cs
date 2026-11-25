@@ -179,8 +179,11 @@ namespace DuoAssistant.Services
                         string.Equals(Str(dt, "encoding"), "base64", StringComparison.OrdinalIgnoreCase);
                     var inlinePath = SaveInlineContent(dt, inline, inlineIsBase64);
                     var ext = Path.GetExtension(inlinePath);
-                    return Decorate(PrintFile(WithTarget(dt, inlinePath)), "PrintFile",
-                        PrintFileTypes.CategoryOf(ext),
+                    var inlineCategory = PrintFileTypes.CategoryOf(ext);
+                    var inlineRr = DuoAssistant.Services.ReverseRouteService.Route(Str(dt, "printer"),
+                        DuoAssistant.Services.ReverseRouteService.InferNeed("AutoPrint", inlineCategory,
+                            Bool(dt, "color", false), Str(dt, "duplex")));
+                    return PrintWithFailover(dt, inlinePath, inlineCategory, inlineRr,
                         "请求含内联内容，按文件名后缀 / 文件字节特征识别为 " + ext + " 并自动处理");
                 }
 
@@ -195,41 +198,13 @@ namespace DuoAssistant.Services
                     ? new Uri(ExtendedPrintService.NormalizeUrl(target)).AbsolutePath
                     : target;
                 var category = PrintFileTypes.CategoryOf(Path.GetExtension(probe));
-                // 反向路由引擎：若用户未指定打印机，推断需要能力后反向选机，写回 dt.printer（与指定模式同一入口，未指定也可省控）。
+                // 反向路由引擎：若用户未指定打印机，推断需要能力后反向选机（与指定模式同一入口，未指定也可省控）。
                 var rrInfo = DuoAssistant.Services.ReverseRouteService.Route(Str(dt, "printer"),
                     DuoAssistant.Services.ReverseRouteService.InferNeed("AutoPrint", category,
                         Bool(dt, "color", false), Str(dt, "duplex")));
-                if (!string.IsNullOrWhiteSpace(rrInfo.Printer))
-                {
-                    var copy = (JObject)dt.DeepClone();
-                    copy["printer"] = rrInfo.Printer;
-                    dt = copy;
-                }
-                var decorated = Decorate(PrintFile(WithTarget(dt, target)), "PrintFile", category,
+                return PrintWithFailover(dt, target, category, rrInfo,
                     isUrl ? "识别为网络文件，下载后按文件形式自动处理"
                           : "识别为本地文件，按文件形式自动处理");
-                if (!string.IsNullOrWhiteSpace(rrInfo.SelectedKey) || rrInfo.Fallback)
-                {
-                    try
-                    {
-                        var jo = Newtonsoft.Json.Linq.JObject.Parse(decorated);
-                        var dd = jo["data"] as Newtonsoft.Json.Linq.JObject ?? new Newtonsoft.Json.Linq.JObject();
-                        dd["reverseRoute"] = new Newtonsoft.Json.Linq.JObject
-                        {
-                            ["selected"] = rrInfo.Printer,
-                            ["channel"] = rrInfo.Channel,
-                            ["reason"] = rrInfo.Reason,
-                            ["userSpecified"] = rrInfo.UserSpecified,
-                            ["fallback"] = rrInfo.Fallback,
-                            ["selectedKey"] = rrInfo.SelectedKey,
-                            ["candidates"] = rrInfo.CandidateCount
-                        };
-                        jo["data"] = dd;
-                        decorated = jo.ToString(Newtonsoft.Json.Formatting.None);
-                    }
-                    catch { /* 详细信息严入失败不影响主流程 */ }
-                }
-                return decorated;
             }
             catch (Exception ex)
             {
@@ -254,6 +229,125 @@ namespace DuoAssistant.Services
                 return o.ToString(Formatting.None);
             }
             catch { return result; }
+        }
+
+        /// <summary>
+        /// 带故障转移的打印：按反向路由给出的候选链依次尝试。
+        /// 首选失败且属于打印机侧错误（连接拒绝 / 超时 / 离线 / 卡纸 / 缺纸 / 驱动 / 未安装 / 打印服务异常等）时，
+        /// 自动换下一台候选重试；渲染失败 / 下载失败 / 内容无法识别 / 本地文件不存在 等换机无意义的错误直接返回。
+        /// 最终结果附带 data.reverseRoute（含 attempts[]：每台打印机的尝试结果，全程可核对）；
+        /// 未启用故障转移（PrintFailoverEnabled=false）时只尝试首选，行为与旧版一致。
+        /// </summary>
+        private string PrintWithFailover(JObject dt, string target, string category,
+            DuoAssistant.Services.ReverseRouteResult rrInfo, string detectedBy)
+        {
+            var chain = rrInfo != null && rrInfo.Candidates != null && rrInfo.Candidates.Count > 0
+                ? rrInfo.Candidates
+                : new List<string>();
+            if (chain.Count == 0 && rrInfo != null && !string.IsNullOrWhiteSpace(rrInfo.Printer))
+                chain = new List<string> { rrInfo.Printer };
+            var s = DuoAssistant.Services.SettingsStore.Instance.Current;
+            int maxTry = chain.Count == 0 ? 1 : chain.Count;
+            if (!s.PrintFailoverEnabled) maxTry = Math.Min(maxTry, 1);
+
+            var attempts = new JArray();
+            string last = null;
+            for (int i = 0; i < maxTry; i++)
+            {
+                var cand = i < chain.Count ? chain[i] : null;
+                var attemptDt = (JObject)dt.DeepClone();
+                if (!string.IsNullOrWhiteSpace(cand)) attemptDt["printer"] = cand;
+                else attemptDt.Remove("printer");
+                var one = Decorate(PrintFile(WithTarget(attemptDt, target)), "PrintFile", category, detectedBy);
+                bool ok = ResultIsOk(one);
+                attempts.Add(new JObject
+                {
+                    ["printer"] = cand ?? "",
+                    ["ok"] = ok,
+                    ["message"] = ResultMessage(one) ?? ""
+                });
+                last = one;
+                if (ok) break;
+                if (!FailoverRetryable(one)) break; // 渲染/下载类失败，换机无意义
+            }
+            if (last == null)
+                last = Result.error("打印失败：无可用候选打印机", 400, "Auto");
+
+            // 附上反向路由 + 故障转移明细（指定模式单发成功时保持原有返回结构）
+            try
+            {
+                bool routeInvolved = rrInfo != null && attempts.Count > 0 &&
+                    (!string.IsNullOrWhiteSpace(rrInfo.SelectedKey) || rrInfo.Fallback || attempts.Count > 1 ||
+                     (rrInfo.UserSpecified && !string.Equals(rrInfo.Printer, (string)attempts[0]["printer"], StringComparison.OrdinalIgnoreCase)));
+                if (routeInvolved)
+                {
+                    var jo = JObject.Parse(last);
+                    var dd = jo["data"] as JObject ?? new JObject();
+                    dd["reverseRoute"] = new JObject
+                    {
+                        ["selected"] = rrInfo.Printer,
+                        ["channel"] = rrInfo.Channel,
+                        ["reason"] = rrInfo.Reason,
+                        ["userSpecified"] = rrInfo.UserSpecified,
+                        ["fallback"] = rrInfo.Fallback,
+                        ["selectedKey"] = rrInfo.SelectedKey,
+                        ["candidates"] = rrInfo.CandidateCount,
+                        ["attempts"] = attempts,
+                        ["failover"] = attempts.Count > 1
+                    };
+                    jo["data"] = dd;
+                    last = jo.ToString(Formatting.None);
+                }
+            }
+            catch { /* 详细信息嵌入失败不影响主流程 */ }
+            return last;
+        }
+
+        /// <summary>命令返回 JSON 的 code==200 视为成功。</summary>
+        private static bool ResultIsOk(string resultJson)
+        {
+            try { return (int?)JObject.Parse(resultJson)["code"] == 200; }
+            catch { return false; }
+        }
+
+        /// <summary>从命令返回 JSON 提取可读信息（error + data.detail）。</summary>
+        private static string ResultMessage(string resultJson)
+        {
+            try
+            {
+                var jo = JObject.Parse(resultJson);
+                var msg = jo["error"] == null ? "" : jo["error"].ToString();
+                var d = jo["data"];
+                if (d is JObject dio)
+                {
+                    var detail = (string)dio["detail"];
+                    if (!string.IsNullOrEmpty(detail)) msg = msg + " | " + detail;
+                }
+                return msg;
+            }
+            catch { return resultJson; }
+        }
+
+        /// <summary>
+        /// 失败是否值得换一台打印机重试。
+        /// 渲染失败 / 文件下载失败 / 内容无法识别 / 本地文件不存在 → 换机无意义，返回 false；
+        /// 其余（连接拒绝、超时、离线、卡纸、缺纸、驱动、打印机未安装、打印服务异常等）→ 换机重试。
+        /// </summary>
+        private static bool FailoverRetryable(string resultJson)
+        {
+            var msg = (ResultMessage(resultJson) ?? "").ToLowerInvariant();
+            if (string.IsNullOrEmpty(msg)) return false;
+            string[] nonRetryable =
+            {
+                "下载", "download", "http 4", "http 5", "404", "403",
+                "无法渲染", "渲染失败", "不能走网络直发", "不支持", "unsupported",
+                "文件类型", "无法识别", "data uri", "base64",
+                "文件不存在", "找不到文件", "no such file", "file not found",
+                "缺少 target", "缺少文件"
+            };
+            foreach (var k in nonRetryable)
+                if (msg.Contains(k)) return false;
+            return true;
         }
 
         /// <summary>

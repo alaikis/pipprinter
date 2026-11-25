@@ -58,7 +58,7 @@ namespace Litchio.Headless
     /// </summary>
     public static class Program
     {
-        public const string Version = "1.01.021";
+        public const string Version = "1.01.022";
         private static readonly object Gate = new object();
         private static readonly List<HJob> Jobs = new List<HJob>();
         private static readonly SemaphoreSlim Signal = new SemaphoreSlim(0);

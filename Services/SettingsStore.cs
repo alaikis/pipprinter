@@ -126,6 +126,11 @@ namespace DuoAssistant.Services
         public bool ReverseRoutingEnabled { get; set; } = true;
         // 自动模式选机策略: idle-first(充载最低，默认) / round-robin / nearest。
         public string ReverseRoutingPolicy { get; set; } = "idle-first";
+        // 打印故障转移: 首选打印机打印失败(连接拒绝/超时/离线/卡纸/驱动等)时,
+        // 按候选链自动换下一台重试; 关闭后行为与旧版一致(失败即返回)。
+        public bool PrintFailoverEnabled { get; set; } = true;
+        // 故障转移最多尝试几台打印机(含首选); 0/负数补 3, 上限钳 10。
+        public int PrintFailoverMaxAttempts { get; set; } = 3;
 
     }
 
@@ -243,6 +248,9 @@ namespace DuoAssistant.Services
                         if (loaded.ScanIntervalMinutes > 1440) loaded.ScanIntervalMinutes = 1440;
                         if (loaded.ProfileTtlSeconds <= 0) loaded.ProfileTtlSeconds = 300;
                         if (loaded.ScanMethods == 0) loaded.ScanMethods = 0xF;
+                        // 打印故障转移: 缺字段时默认开启; MaxAttempts 0/负数补 3, 上限 10。
+                        if (loaded.PrintFailoverMaxAttempts <= 0) loaded.PrintFailoverMaxAttempts = 3;
+                        if (loaded.PrintFailoverMaxAttempts > 10) loaded.PrintFailoverMaxAttempts = 10;
 
                         return loaded;
                     }

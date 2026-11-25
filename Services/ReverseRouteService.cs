@@ -23,6 +23,8 @@ namespace DuoAssistant.Services
         public bool Fallback { get; set; }
         /// <summary>候选（打分后排序）数量，便于调用方核对。</summary>
         public int CandidateCount { get; set; }
+        /// <summary>打印故障转移候选链（按优先级排序，含首选）。打印失败时依次尝试。</summary>
+        public List<string> Candidates { get; set; } = new List<string>();
     }
 
     /// <summary>
@@ -77,7 +79,8 @@ namespace DuoAssistant.Services
                                 Reason = "指定打印机「" + target + "」在线" +
                                         (string.IsNullOrEmpty(needCapability) ? "" : "且能力匹配"),
                                 UserSpecified = true,
-                                SelectedKey = match.key
+                                SelectedKey = match.key,
+                                Candidates = BuildFailoverChain(target, needCapability, s)
                             };
                         }
                         // 不在线 / 能力不匹配 → 回退自动（保留指定意图但标记 fallback）
@@ -97,12 +100,16 @@ namespace DuoAssistant.Services
                 }
 
                 // 目标未登记画像（如裸 host:port 或别名）→ 直接用，不猜
+                var bareChain = BuildFailoverChain(target, needCapability, s);
                 return new ReverseRouteResult
                 {
                     Printer = target,
                     Channel = resolved.Channel,
-                    Reason = resolved.Detail,
-                    UserSpecified = true
+                    Reason = resolved.Detail +
+                        (bareChain.Count > 1 ? "；故障转移候选 " + bareChain.Count + " 台" : ""),
+                    UserSpecified = true,
+                    CandidateCount = bareChain.Count,
+                    Candidates = bareChain
                 };
             }
 
@@ -125,6 +132,12 @@ namespace DuoAssistant.Services
             AppSettings s, int copies)
         {
             var cands = PrinterDiscoveryService.OnlineCandidates(needCapability);
+            // 虚拟文档打印机（PDF/XPS 虚拟端口）不能直接接收打印，选机时优先排除；全是虚拟时才保留
+            if (cands != null && cands.Count > 0)
+            {
+                var real = cands.Where(x => !string.Equals(x.type, "virtual", StringComparison.OrdinalIgnoreCase)).ToList();
+                if (real.Count > 0) cands = real;
+            }
             if (cands == null || cands.Count == 0)
             {
                 return new ReverseRouteResult
@@ -139,31 +152,26 @@ namespace DuoAssistant.Services
                 };
             }
 
-            // 按策略排序
-            var policy = (s.ReverseRoutingPolicy ?? "idle-first").Trim().ToLowerInvariant();
-            List<PrinterProfile> picked;
-            if (policy == "round-robin")
-            {
-                int idx = NextRoundRobin();
-                picked = cands.Skip(idx % cands.Count).Concat(cands.Take(idx % cands.Count)).ToList();
-            }
-            else if (policy == "nearest")
-            {
-                // nearest：本机(local) 优先，其次 网络按地址段近（这里简化为 local 优先）
-                picked = cands
-                    .OrderBy(x => x.type == "local" ? 0 : 1)
-                    .ThenBy(x => x.load)
-                    .ToList();
-            }
-            else
-            {
-                // idle-first（默认）：负载最低优先
-                picked = cands.OrderBy(x => x.load).ThenBy(x => x.name).ToList();
-            }
+            // 按策略排序（与故障转移候选链同一套顺序）
+            var picked = OrderCandidates(cands, s);
 
             var best = picked.First();
             string target = ResolveProfileToTarget(best);
             var resolved = SlugResolver.Resolve(target);
+            // 故障转移候选链：首选 + 其余在线候选（受 PrintFailoverMaxAttempts 限制）
+            var chain = new List<string> { target };
+            if (s.PrintFailoverEnabled)
+            {
+                int maxTry = s.PrintFailoverMaxAttempts > 0 ? s.PrintFailoverMaxAttempts : 3;
+                foreach (var p in picked.Skip(1))
+                {
+                    if (string.Equals(p.type, "virtual", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (chain.Count >= maxTry) break;
+                    var t = ResolveProfileToTarget(p);
+                    if (!chain.Any(x => string.Equals(x, t, StringComparison.OrdinalIgnoreCase)))
+                        chain.Add(t);
+                }
+            }
             return new ReverseRouteResult
             {
                 Printer = target,
@@ -171,12 +179,41 @@ namespace DuoAssistant.Services
                 Reason = "自动选中「" + best.name + "」" +
                         (best.type == "network" ? "（网络 " + best.address + ":" + best.port +
                          " " + best.protocol + "）" : "（本机）") +
-                        "，策略=" + policy + "，候选=" + cands.Count,
+                        "，策略=" + (s.ReverseRoutingPolicy ?? "idle-first") + "，候选=" + cands.Count,
                 UserSpecified = false,
                 Fallback = false,
                 SelectedKey = best.key,
-                CandidateCount = cands.Count
+                CandidateCount = cands.Count,
+                Candidates = chain
             };
+        }
+
+        /// <summary>
+        /// 构造打印故障转移候选链：首选 + 其它在线候选（按策略排序），
+        /// 数量受 PrintFailoverMaxAttempts 限制；未启用故障转移时只保留首选。
+        /// </summary>
+        private static List<string> BuildFailoverChain(string primary, string needCapability, AppSettings s)
+        {
+            var chain = new List<string>();
+            if (!string.IsNullOrWhiteSpace(primary)) chain.Add(primary);
+            if (!s.PrintFailoverEnabled) return chain;
+            try
+            {
+                int maxTry = s.PrintFailoverMaxAttempts > 0 ? s.PrintFailoverMaxAttempts : 3;
+                var cands = PrinterDiscoveryService.OnlineCandidates(needCapability);
+                if (cands == null) return chain;
+                cands = OrderCandidates(cands, s);
+                foreach (var c in cands)
+                {
+                    if (string.Equals(c.type, "virtual", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (chain.Count >= maxTry) break;
+                    var t = ResolveProfileToTarget(c);
+                    if (chain.Any(x => string.Equals(x, t, StringComparison.OrdinalIgnoreCase))) continue;
+                    chain.Add(t);
+                }
+            }
+            catch { /* 候选链构造失败不影响首选 */ }
+            return chain;
         }
 
         /// <summary>把画像还原成 SlugResolver 能吃的目标（本机名 / host:port）。</summary>
@@ -188,6 +225,24 @@ namespace DuoAssistant.Services
                 return p.address + ":" + port;
             }
             return p.name;
+        }
+
+        /// <summary>按 ReverseRoutingPolicy 对候选排序：idle-first(默认) / round-robin / nearest。</summary>
+        private static List<PrinterProfile> OrderCandidates(List<PrinterProfile> cands, AppSettings s)
+        {
+            var policy = (s.ReverseRoutingPolicy ?? "idle-first").Trim().ToLowerInvariant();
+            if (policy == "round-robin")
+            {
+                int idx = NextRoundRobin();
+                return cands.Skip(idx % cands.Count).Concat(cands.Take(idx % cands.Count)).ToList();
+            }
+            if (policy == "nearest")
+            {
+                // nearest：本机(local) 优先，其次按负载
+                return cands.OrderBy(x => x.type == "local" ? 0 : 1).ThenBy(x => x.load).ToList();
+            }
+            // idle-first（默认）：负载最低优先
+            return cands.OrderBy(x => x.load).ThenBy(x => x.name).ToList();
         }
 
         private static int NextRoundRobin()
