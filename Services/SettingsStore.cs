@@ -185,6 +185,19 @@ namespace DuoAssistant.Services
                         // 缺字段时补默认值，保证旧配置升级不炸
                         if (loaded.WebPort <= 0) loaded.WebPort = 19861;
                         if (string.IsNullOrWhiteSpace(loaded.WebHost)) loaded.WebHost = "0.0.0.0";
+                        // 存量/新装兼容：非本机监听(0.0.0.0 或网卡 IP) + requireTokenOnLan=true + apiToken 为空，
+                        // 会命中 WebServerService 启动门禁拒绝监听，导致 /api/printers 等本机 API 全部不可用
+                        // （安装器升级原样保留 config，故存量用户升级后同样中招；e2e 因测试副本改 127.0.0.1 掩盖了此问题）。
+                        // 产品定位为本机服务，此处自动降级到回环地址，保证首次启动即可用；
+                        // 需要局域网访问的用户请自行设置 apiToken（一旦配置则不会触发本迁移，行为不变）。
+                        string _wh = (loaded.WebHost ?? "").Trim().ToLowerInvariant();
+                        bool _loopback = _wh == "127.0.0.1" || _wh == "localhost" || _wh == "::1";
+                        if (!_loopback && loaded.RequireTokenOnLan && string.IsNullOrWhiteSpace(loaded.ApiToken))
+                        {
+                            DuoAssistant.Utils.Tools.Logger("存量配置兼容：webHost=" + loaded.WebHost + " 未配 apiToken 会拒绝启动，自动降级为 127.0.0.1");
+                            loaded.WebHost = "127.0.0.1";
+                        }
+
                         if (loaded.CleanMaxAgeDays < 0) loaded.CleanMaxAgeDays = 7;
                         if (loaded.CleanMinSizeMB < 0) loaded.CleanMinSizeMB = 1;
                         if (loaded.AllowedCommands == null || loaded.AllowedCommands.Count == 0)
@@ -206,7 +219,7 @@ namespace DuoAssistant.Services
                                                           "PreviewJob", "ListInboxFiles", "PrintInboxFile",
                                                           "ListNotifications", "TestNotification",
                                                           "AuthenticateUser", "ListIdentityProviders",
-                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate", "GetPrinterProfiles", "GetCentralPrinters", "GetCentralPrinters" })
+                                                          "SyncCentral", "GetCentralStatus", "ListCentralClients", "TriggerSilentUpdate", "GetPrinterProfiles", "GetCentralPrinters" })
                                 if (!loaded.AllowedCommands.Exists(x =>
                                         string.Equals(x, added, StringComparison.OrdinalIgnoreCase)))
                                     loaded.AllowedCommands.Add(added);
@@ -246,6 +259,9 @@ namespace DuoAssistant.Services
         {
             return new AppSettings
             {
+                // 默认监听回环：本机服务开箱即用，不会因「非本机监听需 token」门禁拒绝启动。
+                // 需要局域网访问的用户在 config/appsettings.json 配置 apiToken 后自行改回 0.0.0.0。
+                WebHost = "127.0.0.1",
                 AllowedCommands = new List<string>
                 {
                     "AutoPrint", "PrintPdf", "PrintFile", "PrintBarcode", "PrintToPdf", "PrintToXps", "PrintEscPos",

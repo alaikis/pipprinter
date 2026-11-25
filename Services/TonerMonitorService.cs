@@ -63,6 +63,36 @@ namespace DuoAssistant.Services
             foreach (var h in hosts) Query(h);
         }
 
+        /// <summary>能力精煥（打印机画像能力推断）：仅本机与网络机，自动推断能力列表（color/duplex/barcode/escpos）。</summary>
+        public static string[] DetectCapabilities(string host, string name, int timeoutMs = 1200)
+        {
+            var caps = new List<string>();
+            // 图像名关键词（低成本，无网络 IO）
+            var key = ((name ?? "") + "|" + (host ?? "")).ToLowerInvariant();
+            if (key.Contains("escpos") || key.Contains("receipt") || key.Contains("58mm") || key.Contains("80mm"))
+                caps.Add("escpos");
+            if (key.Contains("barcode") || key.Contains("code") || key.Contains("thermo"))
+                caps.Add("barcode");
+            // 在线机（有地址）再跑 SNMP 壶量，推断 color / duplex
+            if (!string.IsNullOrWhiteSpace(host))
+            {
+                try
+                {
+                    var levels = Query(host);
+                    if (levels != null && levels.Count > 0)
+                    {
+                        // 壶量 MIB 有数据 → 可能是吉色（乘色卡多张卡\uff09
+                        if (levels.Count >= 4) caps.Add("duplex");
+                        var descs = string.Join(" ", levels.Select(x => x.Cartridge).ToArray()).ToLowerInvariant();
+                        if (descs.Contains("color") || descs.Contains("cyan") || descs.Contains("magenta"))
+                            caps.Add("color");
+                    }
+                }
+                catch { /* 壶量失败不影响能力 */ }
+            }
+            return caps.Distinct().ToArray();
+        }
+
         // ------------------------------------------------ SNMP v1 最小实现
 
         private static List<TonerLevel> SnmpToner(string host, string community, int timeoutMs)

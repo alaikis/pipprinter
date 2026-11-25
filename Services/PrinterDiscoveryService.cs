@@ -172,6 +172,13 @@ namespace DuoAssistant.Services
                 Tools.Logger("打印机发现异常（继续）: " + ex.Message);
             }
 
+            // 能力推断：为每台画像填充 capabilities（本机机名关键词 + 网络机 SNMP 墨量）。
+            foreach (var fp in fresh)
+            {
+                var caps = TonerMonitorService.DetectCapabilities(fp.address ?? "", fp.name ?? "");
+                if (caps != null && caps.Length > 0)
+                    fp.capabilities = Newtonsoft.Json.JsonConvert.SerializeObject(caps);
+            }
             Publish(fresh, now);
             return fresh.Count;
         }
