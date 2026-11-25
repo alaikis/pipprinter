@@ -7,7 +7,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>litchio-headless</AssemblyName>
     <RootNamespace>Litchio.Headless</RootNamespace>
-    <Version>1.01.014</Version>
+    <Version>1.01.015</Version>
     <Product>Litchio Printing Assistant - Headless</Product>
     <Company>Alaikis.com Inc</Company>
     <InvariantGlobalization>true</InvariantGlobalization>
